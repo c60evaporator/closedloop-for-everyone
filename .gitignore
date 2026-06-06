@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+# Coding assistant settings
+.claude
+.copilot
+.vscode
+# data
+/data/*
+!/data/.gitkeep
+!/data/CLAUDE.md

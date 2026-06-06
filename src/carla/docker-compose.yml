@@ -1,0 +1,46 @@
+services:
+  carla-nuscenes-dev:
+    image: "${IMAGE_NAME:-carla-nuscenes-dev}:${IMAGE_TAG:-0.1}"
+    # docker build options
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # --build-arg option
+      args:
+        # Python version for the container
+        PYTHON_VERSION: "${PYTHON_VERSION:-3.8}"
+        # CARLA_ROOT
+        CARLA_ROOT: "${CARLA_ROOT:-/workspace/carla}"
+        # Match host UID/GID to avoid permission issues on bind mounts
+        USERNAME: "${USERNAME:-developer}"
+        UID: "${HOST_UID:-1000}"
+        GID: "${HOST_GID:-1000}"
+
+        # Proxy settings (if needed)
+        HTTP_PROXY: "${HTTP_PROXY:-}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-}"
+
+    # Container name (--name option)
+    container_name: carla_nuscenes_dev
+    network_mode: host  # Use host network to connect to CARLA on host
+    # Stable operation for development
+    init: true  # --init option
+    stdin_open: true  # -i option
+    tty: true  # -t option
+    # Set startup directory
+    working_dir: /workspace
+
+    # Environment variables (-e option)
+    environment:
+      # Base path for datasets inside the container
+      DATASET_ROOT: "/datasets"
+      # CARLA connection settings (use host's CARLA server)
+      CARLA_HOST: "${CARLA_HOST:-localhost}"
+      CARLA_PORT: "${CARLA_PORT:-30000}"
+    
+    # Volume mounts
+    volumes:
+      # Dataset root folder on host to /data in container
+      - "${DATASET_HOST:-./data}:/data"
+      # CARLA PythonAPI on host
+      - "${CARLA_HOST_PATH:-~./carla}:${CARLA_ROOT:-/workspace/carla}"
