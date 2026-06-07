@@ -61,12 +61,6 @@ erDiagram
         datetime updated_at
     }
 
-    weather_connections{
-        int id
-        int weather_group_id
-        int weather_id
-    }
-
     leaderboards{
         int id
         UUID public_id
@@ -78,6 +72,12 @@ erDiagram
         datetime updated_at
     }
 
+    weather_connections{
+        int id
+        int weather_group_id
+        int weather_id
+    }
+
     routes{
         int id
         UUID public_id
@@ -85,7 +85,6 @@ erDiagram
         int road_id
         string town_name
         JSON waypoints
-        JSON scenarios
         int leaderboard_id
         int weather_group_id
         int version
@@ -101,6 +100,45 @@ erDiagram
         int project_index
         string filename
         int version
+        datetime created_at
+        datetime updated_at
+    }
+
+    scenario_connections{
+        int id
+        int route_id
+        int scenario_id
+        float trigger_point_x
+        float trigger_point_y
+        float trigger_point_z
+        float trigger_point_yaw
+        JSON scenario_params
+    }
+
+    parked_groups{
+        int id
+        UUID public_id
+        string name
+        int project_id
+        int project_index
+        datetime created_at
+        datetime updated_at
+    }
+
+    parked_vehicles{
+        int id
+        UUID public_id
+        int parked_group_id
+        string map
+        int tilex
+        int tiley
+        float location_x
+        float location_y
+        float location_z
+        float rotation_pitch
+        float rotation_yaw
+        float rotation_pitch
+        string mesh
         datetime created_at
         datetime updated_at
     }
@@ -182,13 +220,14 @@ erDiagram
         datetime updated_at
     }
 
-    evaluation{
+    evaluations{
         int id
         UUID public_id
         string name
         int project_id
         int project_index
         int leaderboard_id
+        int parked_group_id
         int agent_id
         int infraction_penalty_id
         datetime created_at
@@ -202,8 +241,7 @@ erDiagram
         int project_id
         int project_index
         int leaderboard_id
-        int agent_id
-        int agent_version
+        string collect_agent
         datetime created_at
         datetime updated_at
     }
@@ -217,6 +255,8 @@ erDiagram
     projects ||--|{ weather_groups: ""
     projects ||--|{ weathers: ""
     projects ||--|{ leaderboards: ""
+    projects ||--|{ scenarios: ""
+    projects ||--|{ parked_groups: ""
     projects ||--|{ agents: ""
     projects ||--|{ ego_vehicles: ""
     projects ||--|{ sensors: ""
@@ -226,10 +266,17 @@ erDiagram
     weathers ||--o{ weather_connections: ""
     leaderboards ||--|{ routes: ""
     weather_groups ||--|{ routes: ""
+    routes ||--o{ scenario_connections: ""
+    scenarios ||--o{ scenario_connections: ""
+    parked_groups ||--|{ parked_vehicles: ""
     ego_vehicles ||--o{ sensor_connections: ""
     sensors ||--o{ sensor_connections: ""
+    leaderboards ||--o{ evaluations: ""
+    parked_vehicles ||--o{ evaluations: ""
+    agents ||--o{ evaluations: ""
+    infraction_penalties ||--o{ evaluations: ""
     leaderboards ||--o{ nuscenes_data: ""
-    agents ||--o{ nuscenes_data: ""
+    parked_vehicles ||--o{ nuscenes_data: ""
     nuscenes_data ||--o{ nuscenes_map_connections: ""
     nuscenes_maps ||--o{ nuscenes_map_connections: ""
 ```
