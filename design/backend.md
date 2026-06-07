@@ -12,20 +12,19 @@ data/   # データセットの出力先フォルダのルート（docker_compos
 │   │       ├── basemap_{map_name2}.png  # CARLAから抽出したMap2のベースマップ（png形式）
 │   │       :
 │   │       └── expansion <- Map Expansionのメタデータ
-│   ├── leaderboard/   # CARLA Leaderboard形式の設定ファイルやエージェントの置き場
-│   :   ├── agents/                     # Leaderboard形式のエージェントコード置き場
-│       │   ├── {agent_name1}_{version} # あるエージェントのあるバージョンのファイル保持用フォルダ
-│       │   :   ├── Dockerfile_sim       # シミュレーション実行用Dockerfile
-│       │       ├── Dockerfile_submit    # Leaderboard提出用Dockerfile
-│       │       └── team_code            # このフォルダがコンテナにマウントされる  
-│       │           ├── {agent_name1}.py # エージェントファイル本体
-│       │           :                    # その他の依存ファイル（planner等）
-│       ├── parked_vehicles/  # 駐車車両定義ファイル置き場（デフォルトはleaderboardのものを使用）
-│       │   ├── {parked_vehicle_name1}.py
-│       │   :
-│       └── scenarios/  # シナリオ定義ファイル置き場（デフォルトはscenario_runnerのものを使用）
-│           ├── {scenario_name1}.py
-│           :
+│   ├── agents/                     # Leaderboard形式のエージェントコード置き場（デフォルトはleaderboardのものを使用）
+│   │   ├── {agent_name1}_{version} # あるエージェントのあるバージョンのファイル保持用フォルダ
+│   │   :   ├── Dockerfile_sim       # シミュレーション実行用Dockerfile
+│   │       ├── Dockerfile_submit    # Leaderboard提出用Dockerfile
+│   │       └── team_code            # このフォルダがコンテナにマウントされる  
+│   │           ├── {agent_name1}.py # エージェントファイル本体
+│   │           :                    # その他の依存ファイル（planner等）
+│   ├── parked_vehicles/  # Leaderboard形式の駐車車両定義ファイル置き場（デフォルトはleaderboardのものを使用）
+│   │   ├── {parked_vehicle_name1}.py
+│   │   :
+│   └── scenarios/  # シナリオ定義ファイル置き場（デフォルトはscenario_runnerのものを使用）
+│       ├── {scenario_name1}.py
+│       :
 ├── {project_name2}/    # Dataset2の出力フォルダ
 ```
 
@@ -235,6 +234,16 @@ erDiagram
     nuscenes_maps ||--o{ nuscenes_map_connections: ""
 ```
 
+
+### テンプレートファイル
+
+#### データ収集用エージェント
+
+- PDM-Lite: carla_garage/collect_dataset_slurm.pyをベースに
+
+#### planner
+
+- 
 
 
 ## 注意点
