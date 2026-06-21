@@ -1,22 +1,30 @@
 ```
-data/   # データセットの出力先フォルダのルート（docker_composeでマウントされる）
+data/   # 出力先フォルダのルート（docker_composeでマウントされる）
 ├── {project_name1}/    # Project1の出力フォルダ
 │   ├── {project_name1}.sqlite   # メタデータ管理用のDBファイル
-│   ├── nuscenes/   # nuScenes形式データセットの出力フォルダ
-│   │   ├── {agent_name}_/
-│   │   │   ├── v1.0-trainval/
-│   │   │   ├── sweeps/
-│   │   │   └── samples/
-│   │   └── map/
-│   │       ├── basemap_{map_name1}.png  # CARLAから抽出したMap1のベースマップ（png形式）
-│   │       ├── basemap_{map_name2}.png  # CARLAから抽出したMap2のベースマップ（png形式）
-│   │       :
-│   │       └── expansion <- Map Expansionのメタデータ
+|   ├── map_annotation
+|   │   ├── nuscenes/   # nuScenes Map expansion形式の出力フォルダ
+|   │   │   ├── basemap_{map_name1}.png  # CARLAから抽出したMap1のベースマップ（png形式）
+|   │   │   ├── basemap_{map_name2}.png  # CARLAから抽出したMap2のベースマップ（png形式）
+|   │   │   :
+|   │   │   └── expansion <- Map Expansionのメタデータ
+|   │   └── speed_limits/  # Carla GARAGE用のspeed_limitsファイル
+|   │       ├── {map_name1}_speed_limits.npy  # CARLAから抽出したMap1のspeed_limitsファイル（npy形式）
+|   │       :
+|   ├── data_collection
+|   │   ├── nuscenes/   # nuScenes形式データセットの出力フォルダ
+|   │   :   └── {agent_name}_{datagen_route}_{timestamp}/
+|   │           ├── results/  # データ収集時のresult.json
+|   │           |   ├── {scenario_type}_{route_name}_result.json
+|   │           |   :
+|   │           ├── v1.0-trainval/
+|   │           ├── sweeps/
+|   │           └── samples/
 │   ├── agents/                     # Leaderboard形式のエージェントコード置き場（デフォルトはleaderboardのものを使用）
 │   │   ├── {agent_name1}_{version} # あるエージェントのあるバージョンのファイル保持用フォルダ
 │   │   :   ├── Dockerfile_sim       # シミュレーション実行用Dockerfile
 │   │       ├── Dockerfile_submit    # Leaderboard提出用Dockerfile
-│   │       └── team_code            # このフォルダがコンテナにマウントされる  
+│   │       └── team_code            # このフォルダがコンテナにマウントされる
 │   │           ├── {agent_name1}.py # エージェントファイル本体
 │   │           :                    # その他の依存ファイル（planner等）
 │   ├── parked_vehicles/  # Leaderboard形式の駐車車両定義ファイル置き場（デフォルトはleaderboardのものを使用）
@@ -67,6 +75,8 @@ erDiagram
         string name
         int project_id
         int project_index
+        bool is_datagen
+        int datagen_routes_id
         string parked_vehicle_file
         datetime created_at
         datetime updated_at
@@ -113,6 +123,16 @@ erDiagram
         float trigger_point_z
         float trigger_point_yaw
         JSON scenario_params
+    }
+
+    datagen_routes{
+        int id
+        UUID public_id
+        string name
+        int project_id
+        int project_index
+        datetime created_at
+        datetime updated_at
     }
 
     parked_groups{
@@ -256,6 +276,7 @@ erDiagram
     projects ||--|{ weathers: ""
     projects ||--|{ leaderboards: ""
     projects ||--|{ scenarios: ""
+    projects ||--|{ datagen_routes: ""
     projects ||--|{ parked_groups: ""
     projects ||--|{ agents: ""
     projects ||--|{ ego_vehicles: ""
@@ -268,6 +289,7 @@ erDiagram
     weather_groups ||--|{ routes: ""
     routes ||--o{ scenario_connections: ""
     scenarios ||--o{ scenario_connections: ""
+    datagen_routes ||--|{ leaderboards: ""
     parked_groups ||--|{ parked_vehicles: ""
     ego_vehicles ||--o{ sensor_connections: ""
     sensors ||--o{ sensor_connections: ""
