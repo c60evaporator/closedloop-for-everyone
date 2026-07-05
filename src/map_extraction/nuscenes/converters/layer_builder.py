@@ -13,8 +13,9 @@ from shapely.ops import unary_union
 from src.map_extraction.nuscenes.converters.geometry_builder import GeometryBuilder, generate_token
 from src.map_extraction.nuscenes.extractors.waypoint_extractor import LaneInfo
 from src.map_extraction.nuscenes.extractors.landmark_extractor import (
-    CrosswalkPolygon, TrafficLightInfo, StopSignInfo,
+    CrosswalkPolygon, StopSignInfo,
 )
+from src.map_extraction.nuscenes.extractors.actor_extractor import TrafficLightActorInfo
 from src.map_extraction.nuscenes.extractors.lane_marking_extractor import DividerLine
 from src.map_extraction.utils.geom import get_lane_polygon_points, split_polygon_by_line, merge_linestrings_greedy
 
@@ -56,6 +57,8 @@ class NuScenesLayerBuilder:
 
         # 内部マッピング: (road_id, section_id, lane_id) -> lane token
         self._lane_key_to_token: Dict[Tuple[int, int, int], str] = {}
+        # build_traffic_lightsで生成したtoken（入力アクターと同順に、アクターごとの全ヘッドtoken。stop_line紐付け用）
+        self._traffic_light_tokens: List[List[str]] = []
 
     def _calc_from_to_edge_lines(self, lane_info: LaneInfo) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
         # 走行方向の判定: boundary_pointsの並び方向に対してleft境界が左側にあるか（外積で判定）
@@ -534,13 +537,31 @@ class NuScenesLayerBuilder:
 
         logger.info(f"Built {len(self.road_divider)} road_dividers, {len(self.lane_divider)} lane_dividers")
 
+    def _find_road_block_token(self, geometry) -> str:
+        """ジオメトリとの交差面積が最大のroad_blockのtokenを返す（交差するものがなければ空文字）"""
+        best_token = ''
+        best_area = 0.0
+        for rb in self.road_block:
+            rb_polygon = rb.get('_shapely_polygon')
+            if rb_polygon is None:
+                continue
+            area = rb_polygon.intersection(geometry).area
+            if area > best_area:
+                best_area = area
+                best_token = rb['token']
+        return best_token
+
+    def _make_stop_line_geometry(self, stop_line_points: List[Tuple[float, float]]):
+        """停止線の点列から0.6m幅の帯状ポリゴン（Shapely、CARLA座標系）を生成する"""
+        return ShapelyLineString(stop_line_points).buffer(0.3, cap_style=2)
+
     def build_stop_lines(
         self,
         crosswalks: List[CrosswalkPolygon],
         stop_signs: List[StopSignInfo],
-        traffic_lights: List[TrafficLightInfo],
+        traffic_light_actors: List[TrafficLightActorInfo],
     ) -> None:
-        """stop_line レイヤーを構築する"""
+        """stop_line レイヤーを構築する。信号機由来のstop_lineを含むため、build_traffic_lightsの後に呼ぶこと"""
         # 横断歩道に付随する停止線
         for i, cw in enumerate(crosswalks):
             if len(cw.vertices) < 2:
@@ -576,31 +597,91 @@ class NuScenesLayerBuilder:
                 'road_block_token': '',
             })
 
+        # 信号機に付随する停止線（アクターの停止waypointから生成し、同一ポールの全ヘッドのtokenと紐づける）
+        if traffic_light_actors and len(self._traffic_light_tokens) != len(traffic_light_actors):
+            logger.warning("build_traffic_lights must be called before build_stop_lines to link traffic_light_tokens")
+        for tl, head_tokens in zip(traffic_light_actors, self._traffic_light_tokens):
+            if len(tl.stop_line_points) < 2:
+                continue
+            stop_line_geom = self._make_stop_line_geometry(tl.stop_line_points)
+            polygon_token = self.gb.add_polygon(list(stop_line_geom.exterior.coords))
+            self.stop_line.append({
+                'token': generate_token(),
+                'polygon_token': polygon_token,
+                'stop_line_type': 'TRAFFIC_LIGHT',
+                'ped_crossing_tokens': [],
+                'traffic_light_tokens': head_tokens,
+                'road_block_token': self._find_road_block_token(stop_line_geom),
+            })
+
         logger.info(f"Built {len(self.stop_line)} stop_lines")
 
-    def build_traffic_lights(self, traffic_lights: List[TrafficLightInfo]) -> None:
-        """traffic_light レイヤーを構築する"""
-        for tl in traffic_lights:
-            # 信号機の位置をラインとして登録（点として扱う）
-            line_token = self.gb.add_line([(tl.x, tl.y), (tl.x, tl.y)])
-            ns_x, ns_y = self.gb.transformer.transform(tl.x, tl.y)
+    def build_traffic_lights(self, traffic_light_actors: List[TrafficLightActorInfo]) -> None:
+        """
+        traffic_light レイヤーを構築する。build_road_blocksの後に呼ぶこと。
+        本家nuScenesに合わせて1レコード=1灯器ヘッドとし、同一ポールのヘッド群は
+        from_road_block_token（および_traffic_light_tokens経由でstop_line）を共有する。
+        """
+        self._traffic_light_tokens = []
+
+        def _append_record(x: float, y: float, z: float, yaw_rad: float,
+                           traffic_light_type: str, items: List[dict],
+                           from_road_block_token: str) -> str:
+            token = generate_token()
+            # 灯器正面（yaw）方向へ1mのラインとして登録（poseと同情報を表す）
+            line_token = self.gb.add_line([
+                (x, y),
+                (x + math.cos(yaw_rad), y + math.sin(yaw_rad)),
+            ])
+            ns_x, ns_y = self.gb.transformer.transform(x, y)
             self.traffic_light.append({
-                'token': generate_token(),
+                'token': token,
                 'line_token': line_token,
-                'traffic_light_type': 'VERTICAL',
-                'from_road_block_token': '',
-                'items': [],
+                'traffic_light_type': traffic_light_type,
+                'from_road_block_token': from_road_block_token,
+                'items': items,
                 'pose': {
                     'tx': ns_x,
                     'ty': ns_y,
-                    'tz': tl.z,
+                    'tz': z,
                     'rx': 0.0,
                     'ry': 0.0,
-                    'rz': 0.0,
+                    # CARLA（左手系、Y南向き）→nuScenes（右手系）でY軸反転するためyawは符号反転
+                    'rz': -yaw_rad,
                 },
             })
+            return token
 
-        logger.info(f"Built {len(self.traffic_light)} traffic_lights")
+        for tl in traffic_light_actors:
+            yaw_rad = math.radians(tl.yaw)
+            # 停止線（制御対象レーン上）との交差面積が最大のroad_blockを進入元として紐づける
+            from_road_block_token = ''
+            if len(tl.stop_line_points) >= 2:
+                from_road_block_token = self._find_road_block_token(
+                    self._make_stop_line_geometry(tl.stop_line_points))
+
+            head_tokens = []
+            for head in tl.light_heads:
+                # CARLAでは個々のバルブ位置が取れないため、筐体の高さを3等分してRED/YELLOW/GREENを合成する
+                bulb_spacing = 2 * head.extent_z / 3
+                items = [
+                    {'color': color, 'shape': 'CIRCLE',
+                     'rel_pos': {'tx': 0.0, 'ty': 0.0, 'tz': tz, 'rx': 0.0, 'ry': 0.0, 'rz': 0.0},
+                     'to_road_block_tokens': []}
+                    for color, tz in [('RED', bulb_spacing), ('YELLOW', 0.0), ('GREEN', -bulb_spacing)]
+                ]
+                traffic_light_type = 'VERTICAL' if head.extent_z >= max(head.extent_x, head.extent_y) else 'HORIZONTAL'
+                head_tokens.append(_append_record(
+                    head.x, head.y, head.z, yaw_rad, traffic_light_type, items, from_road_block_token))
+
+            # ヘッドが取得できないアクターはポール位置で1レコードを出してstop_lineとのリンクを維持
+            if not head_tokens:
+                head_tokens.append(_append_record(
+                    tl.x, tl.y, tl.z, yaw_rad, 'VERTICAL', [], from_road_block_token))
+
+            self._traffic_light_tokens.append(head_tokens)
+
+        logger.info(f"Built {len(self.traffic_light)} traffic_lights from {len(traffic_light_actors)} actors")
 
     def remove_internal_keys(self) -> None:
         """最終出力前に、内部参照用のキーを全てのレコードから削除する"""

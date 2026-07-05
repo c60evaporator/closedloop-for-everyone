@@ -39,11 +39,11 @@ def extract_carla_map_data(carla_world, sampling_resolution):
 
     # ランドマーク抽出
     crosswalks = extract_crosswalks(carla_map)
-    traffic_lights = extract_traffic_lights(carla_map)
+    traffic_light_landmarks = extract_traffic_lights(carla_map)
     stop_signs = extract_stop_signs(carla_map)
 
     # アクター抽出
-    extract_traffic_light_actors(carla_world)
+    traffic_light_actors = extract_traffic_light_actors(carla_world)
 
     # レーンマーキング抽出
     road_dividers, lane_dividers = extract_dividers(lanes)
@@ -55,7 +55,8 @@ def extract_carla_map_data(carla_world, sampling_resolution):
     logger.info(f"  Junctions: {len(junctions)}")
     logger.info(f"  Lane connectivity pairs: {len(lane_connectivity)}")
     logger.info(f"  Crosswalks: {len(crosswalks)}")
-    logger.info(f"  Traffic lights: {len(traffic_lights)}")
+    logger.info(f"  Traffic light landmarks: {len(traffic_light_landmarks)}")
+    logger.info(f"  Traffic light actors: {len(traffic_light_actors)}")
     logger.info(f"  Stop signs: {len(stop_signs)}")
     logger.info(f"  Sidewalks: {len(sidewalks)}")
     logger.info(f"  Lane dividers: {len(lane_dividers)}")
@@ -67,7 +68,8 @@ def extract_carla_map_data(carla_world, sampling_resolution):
         'junctions': junctions,
         'lane_connectivity': lane_connectivity,
         'crosswalks': crosswalks,
-        'traffic_lights': traffic_lights,
+        'traffic_light_landmarks': traffic_light_landmarks,
+        'traffic_light_actors': traffic_light_actors,
         'stop_signs': stop_signs,
         'parkings': parkings,
         'sidewalks': sidewalks,
@@ -108,8 +110,9 @@ def convert_carla_map_to_nuscenes(carla_map_data, closing_kernel_size=9, merge_b
     lb.build_carpark_areas(carla_map_data['parkings'])
     lb.build_walkways(carla_map_data['sidewalks'])
     lb.build_dividers(carla_map_data['lane_dividers'] + carla_map_data['road_dividers'])
-    lb.build_stop_lines(carla_map_data['crosswalks'], carla_map_data['stop_signs'], carla_map_data['traffic_lights'])
-    lb.build_traffic_lights(carla_map_data['traffic_lights'])
+    # stop_lineがtraffic_lightのtokenを参照するため、build_traffic_lightsを先に呼ぶ
+    lb.build_traffic_lights(carla_map_data['traffic_light_actors'])
+    lb.build_stop_lines(carla_map_data['crosswalks'], carla_map_data['stop_signs'], carla_map_data['traffic_light_actors'])
     lb.resolve_lane_connectivity()
     # 不要な内部キーを削除
     lb.remove_internal_keys()

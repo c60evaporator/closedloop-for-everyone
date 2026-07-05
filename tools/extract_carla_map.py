@@ -41,8 +41,8 @@ def parse_args():
                         help='Map name to load (e.g., Town01). If not specified, uses current map')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Output directory (default: env DATASET_ROOT or ./data)')
-    parser.add_argument('--dataset-name', type=str, default='default',
-                        help='Dataset name for output folder structure')
+    parser.add_argument('--project-name', type=str, default='debug',
+                        help='Project name for output folder structure')
     parser.add_argument('--sampling-resolution', type=float, default=1.0,
                         help='Waypoint sampling resolution in meters (default: 1.0)')
     parser.add_argument('--closing-kernel-size', type=int, default=9,
@@ -55,7 +55,7 @@ def main():
     args = parse_args()
 
     output_dir = args.output_dir or os.environ.get('DATASET_ROOT', './data')
-    dataset_name = args.dataset_name
+    project_name = args.project_name
 
     logger.info("=" * 60)
     logger.info("CARLA → nuScenes Map Expansion Converter")
@@ -87,7 +87,7 @@ def main():
     logger.info("\n--- Phase 4: Generating output ---")
 
     # 出力パス構築
-    nuscenes_dir = os.path.join(output_dir, dataset_name, 'nuscenes')
+    nuscenes_dir = os.path.join(output_dir, project_name, 'map_annotation/nuscenes')
     maps_dir = os.path.join(nuscenes_dir, 'maps')
     expansion_dir = os.path.join(maps_dir, 'expansion')
     os.makedirs(expansion_dir, exist_ok=True)

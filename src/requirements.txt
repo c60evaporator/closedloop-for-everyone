@@ -7,3 +7,4 @@ uuid
 tqdm
 python-dotenv
 jupyter
+nuscenes-devkit
