@@ -470,7 +470,7 @@ class NuScenesLayerBuilder:
         for key, carpark in parkings.items():
             polygon_token = self.gb.build_lane_polygon(carpark.boundary_points)
             # carpark_areaのポリゴンと交差が最大のroad_blockを特定してtokenを紐づける
-            carpark_polygon = ShapelyPolygon(carpark.vertices)
+            carpark_polygon = ShapelyPolygon(get_lane_polygon_points(carpark.boundary_points))
             max_intersection, max_index = max(
                 (carpark_polygon.intersection(rbpoly).area, idx)
                 for idx, rbpoly in enumerate(road_block_polygons)
