@@ -11,6 +11,13 @@ __pycache__
 /data/*
 !/data/.gitkeep
 !/data/CLAUDE.md
+# virtual environments
+.venv
 
 # Cloned repositories
 carla_garage/
+
+# temporary files
+tools/logs
+tools/carla_launch/.pids
+tools/carla_launch/.watchdog.pid
