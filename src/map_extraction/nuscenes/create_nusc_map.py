@@ -84,7 +84,8 @@ def convert_carla_map_to_nuscenes(carla_map_data, closing_kernel_size=9, merge_b
     :param closing_kernel_size: ベースマップ生成時のモルフォロジー閉処理のカーネルサイズ
     :param merge_buffer: ポリゴンマージ時のバッファサイズ
     :param map_expansion_version: nuScenesマップ拡張バージョン
-    :return: nuScenes形式のマップデータ構造
+    :return: (nuScenes形式のマップデータ構造, basemap画像, 座標オフセット情報)
+        座標オフセットは nuScenes座標(basemap左下端原点) = 右手系CARLA座標(CARLA原点) + offset の関係
     """
     # 座標変換の準備
     transformer = CoordinateTransformer()
@@ -169,4 +170,14 @@ def convert_carla_map_to_nuscenes(carla_map_data, closing_kernel_size=9, merge_b
     logger.info(f"  Ped crossings: {len(lb.ped_crossing)}")
     logger.info(f"  Walkways: {len(lb.walkway)}")
 
-    return map_data, basemap_image
+    # CARLA原点とnuScenesマップ原点（basemap左下端）のオフセット情報
+    # nuScenes_x = CARLA_x + x_offset, nuScenes_y = -CARLA_y + y_offset
+    # （右手系変換済みのCARLA原点基準グローバル座標に対しては、両軸ともoffsetを加算するだけでよい）
+    coords_offset = {
+        'x_offset': transformer.x_offset,
+        'y_offset': transformer.y_offset,
+        'description': 'nuscenes_map_coord = right_handed_carla_coord + offset '
+                       '(nuscenes_x = carla_x + x_offset, nuscenes_y = -carla_y + y_offset)',
+    }
+
+    return map_data, basemap_image, coords_offset
