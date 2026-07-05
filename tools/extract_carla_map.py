@@ -8,12 +8,17 @@ import argparse
 import logging
 import os
 import json
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path.cwd()
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 import cv2
 
-from src.carla.carla_client import get_carla_client, set_world
-from src.carla.map.nuscenes.create_nusc_map import extract_carla_map_data, convert_carla_map_to_nuscenes
+from src.carla_utils.carla_client import get_carla_client, set_world
+from src.map_extraction.nuscenes.create_nusc_map import extract_carla_map_data, convert_carla_map_to_nuscenes
 
 # ログ設定
 logging.basicConfig(

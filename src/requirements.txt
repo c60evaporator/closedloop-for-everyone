@@ -6,3 +6,4 @@ matplotlib
 uuid
 tqdm
 python-dotenv
+jupyter

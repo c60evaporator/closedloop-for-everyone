@@ -1,20 +1,20 @@
 import logging
 
-from src.carla.map.nuscenes.extractors.waypoint_extractor import WaypointExtractor
-from src.carla.map.nuscenes.extractors.topology_extractor import (
+from src.map_extraction.nuscenes.extractors.waypoint_extractor import WaypointExtractor
+from src.map_extraction.nuscenes.extractors.topology_extractor import (
     extract_topology, extract_junctions, build_lane_connectivity,
 )
-from src.carla.map.nuscenes.extractors.landmark_extractor import (
+from src.map_extraction.nuscenes.extractors.landmark_extractor import (
     extract_crosswalks, extract_traffic_lights, extract_stop_signs,
 )
-from src.carla.map.nuscenes.extractors.lane_marking_extractor import extract_dividers
-from src.carla.map.nuscenes.extractors.actor_extractor import extract_traffic_light_actors
-from src.carla.map.nuscenes.converters.geometry_builder import GeometryBuilder, CoordinateTransformer
-from src.carla.map.nuscenes.converters.layer_builder import NuScenesLayerBuilder
-from src.carla.map.nuscenes.converters.connectivity_builder import (
+from src.map_extraction.nuscenes.extractors.lane_marking_extractor import extract_dividers
+from src.map_extraction.nuscenes.extractors.actor_extractor import extract_traffic_light_actors
+from src.map_extraction.nuscenes.converters.geometry_builder import GeometryBuilder, CoordinateTransformer
+from src.map_extraction.nuscenes.converters.layer_builder import NuScenesLayerBuilder
+from src.map_extraction.nuscenes.converters.connectivity_builder import (
     build_arcline_paths, build_connectivity_dict,
 )
-from src.carla.map.nuscenes.output.basemap_generator import generate_basemap
+from src.map_extraction.nuscenes.output.basemap_generator import generate_basemap
 
 logger = logging.getLogger(__name__)
 

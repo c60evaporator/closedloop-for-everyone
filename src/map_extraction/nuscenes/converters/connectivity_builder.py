@@ -5,9 +5,9 @@ import logging
 import math
 from typing import List, Dict, Tuple
 
-from src.carla.map.nuscenes.converters.geometry_builder import GeometryBuilder, generate_token
-from src.carla.map.nuscenes.extractors.topology_extractor import JunctionInfo
-from src.carla.map.nuscenes.extractors.waypoint_extractor import LaneInfo
+from src.map_extraction.nuscenes.converters.geometry_builder import GeometryBuilder, generate_token
+from src.map_extraction.nuscenes.extractors.topology_extractor import JunctionInfo
+from src.map_extraction.nuscenes.extractors.waypoint_extractor import LaneInfo
 
 logger = logging.getLogger(__name__)
 

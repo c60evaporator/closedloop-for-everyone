@@ -11,3 +11,6 @@ __pycache__
 /data/*
 !/data/.gitkeep
 !/data/CLAUDE.md
+
+# Cloned repositories
+carla_garage/

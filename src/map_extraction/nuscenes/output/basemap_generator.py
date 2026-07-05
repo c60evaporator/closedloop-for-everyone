@@ -16,7 +16,7 @@ from typing import Tuple
 import cv2
 import numpy as np
 
-from src.carla.map.nuscenes.converters.geometry_builder import GeometryBuilder
+from src.map_extraction.nuscenes.converters.geometry_builder import GeometryBuilder
 
 logger = logging.getLogger(__name__)
 

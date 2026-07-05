@@ -2,8 +2,8 @@ import logging
 
 import numpy as np
 
-from src.carla.map.b2d.extractors.b2d_lanemark_extractor import get_lanemarkings
-from src.carla.map.b2d.extractors.b2d_trigger_volume_extractor import (
+from src.map_extraction.b2d.extractors.b2d_lanemark_extractor import get_lanemarkings
+from src.map_extraction.b2d.extractors.b2d_trigger_volume_extractor import (
     get_stop_sign_trigger_volume, get_traffic_light_trigger_volume,
 )
 

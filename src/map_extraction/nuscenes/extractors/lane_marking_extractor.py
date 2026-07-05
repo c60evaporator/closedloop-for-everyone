@@ -5,7 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 from collections import defaultdict
-from src.carla.map.nuscenes.extractors.waypoint_extractor import LaneInfo
+
+from src.map_extraction.nuscenes.extractors.waypoint_extractor import LaneInfo
 
 logger = logging.getLogger(__name__)
 

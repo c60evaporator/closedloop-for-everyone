@@ -10,13 +10,13 @@ from shapely.geometry import Polygon as ShapelyPolygon
 from shapely.geometry import LineString as ShapelyLineString
 from shapely.ops import unary_union
 
-from src.carla.map.nuscenes.converters.geometry_builder import GeometryBuilder, generate_token
-from src.carla.map.nuscenes.extractors.waypoint_extractor import LaneInfo
-from src.carla.map.nuscenes.extractors.landmark_extractor import (
+from src.map_extraction.nuscenes.converters.geometry_builder import GeometryBuilder, generate_token
+from src.map_extraction.nuscenes.extractors.waypoint_extractor import LaneInfo
+from src.map_extraction.nuscenes.extractors.landmark_extractor import (
     CrosswalkPolygon, TrafficLightInfo, StopSignInfo,
 )
-from src.carla.map.nuscenes.extractors.lane_marking_extractor import DividerLine
-from src.carla.map.utils.geom import get_lane_polygon_points, split_polygon_by_line, merge_linestrings_greedy
+from src.map_extraction.nuscenes.extractors.lane_marking_extractor import DividerLine
+from src.map_extraction.utils.geom import get_lane_polygon_points, split_polygon_by_line, merge_linestrings_greedy
 
 logger = logging.getLogger(__name__)
 

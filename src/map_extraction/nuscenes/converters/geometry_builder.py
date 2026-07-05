@@ -7,7 +7,7 @@ from typing import List, Tuple, Dict, Optional
 
 from shapely.geometry import Polygon
 
-from src.carla.map.utils.geom import get_lane_polygon_points
+from src.map_extraction.utils.geom import get_lane_polygon_points
 
 logger = logging.getLogger(__name__)
 
