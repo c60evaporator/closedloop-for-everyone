@@ -1,6 +1,6 @@
 services:
-  carlagarage-dev:
-    image: "${IMAGE_NAME:-carlagarage-dev}:${IMAGE_TAG:-latest}"
+  carlagarage-b2dzoo:
+    image: "carlagarage-b2dzoo:latest"
     # docker build options
     build:
       context: .
@@ -29,7 +29,7 @@ services:
         http_proxy: "${HTTP_PROXY:-}"
 
     # Container name (--name option)
-    container_name: carlagarage_dev
+    container_name: carlagarage_b2dzoo
     # Set resource sharing to host
     deploy:
       resources:
@@ -73,3 +73,10 @@ services:
       - ./tools:/workspace/tools
       # Project data (datasets, logs, etc.)
       - ./data:${PROJECT_DATA_ROOT:-/workspace/data}
+      # Mount Bench2DriveZoo folder
+      - ./Bench2DriveZoo:/workspace/Bench2DriveZoo
+      - b2d_mmcv:/workspace/Bench2DriveZoo/mmcv  # Overlay mmcv/ with a named volume to keep the in-place build artifacts
+
+# Named volume holding the built mmcv (with compiled CUDA extensions)
+volumes:
+  b2d_mmcv:

@@ -21,3 +21,4 @@ carla_garage/
 tools/logs
 tools/carla_launch/.pids
 tools/carla_launch/.watchdog.pid
+tools/carla_launch/.restart_request_*

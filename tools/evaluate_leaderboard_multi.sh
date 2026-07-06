@@ -30,6 +30,8 @@ ROUTES_FILE="${1:?Please specify the routes file (.xml). Usage: $0 <routes_file>
 EVAL_ROUTES="$(basename "$ROUTES_FILE" .xml)"  # Use file name of ROUTES_FILE as eval_route name
 AGENT_NAME=$2
 
+SAVE_AGENT_DATA=${SAVE_AGENT_DATA:-0}  # If set to 1, save agent data (metric_info.json, etc.) during evaluation; if set to 0, do not save agent data
+
 PRIVILEGED_MODE=${PRIVILEGED_MODE:-0}  # If set to 1, run in privileged mode (using autopilot agent); if set to 0, run in non-privileged mode (using PDM-Lite agent)
 
 if [ "$AGENT_NAME" = "pdmlite" ]; then
@@ -81,6 +83,12 @@ mkdir -p \
     "${DATA_SAVE_DIR}/logs" \
     "${DATA_SAVE_DIR}/results"
 
+# Enable saving agent data if SAVE_AGENT_DATA is set to 1
+if [ "${SAVE_AGENT_DATA}" -eq 1 ]; then
+    mkdir -p "${DATA_SAVE_DIR}/data"
+    export SAVE_PATH="${DATA_SAVE_DIR}/data"
+fi
+
 # ── CARLA Port settings (match launch_carla_servers.sh) ──
 CARLA_HOST=${CARLA_HOST:-localhost}
 BASE_PORT=${CARLA_BASE_PORT:-30000}
@@ -97,7 +105,7 @@ NUM_GPUS=${#GPU_ARRAY[@]}
 SPLIT_BASE="${DATA_SAVE_DIR}/split_routes/${EVAL_ROUTES}"
 mkdir -p "${DATA_SAVE_DIR}/split_routes"
 cp "${ROUTES_FILE}" "${SPLIT_BASE}.xml"
-python3 "${CARLA_GARAGE_ROOT}/../tools/b2d_leaderboard_common/split_route_xml.py" "${SPLIT_BASE}" "${NUM_GPUS}"
+python3 "${CARLA_GARAGE_ROOT}/../tools/common/split_route_xml.py" "${SPLIT_BASE}" "${NUM_GPUS}"
 
 # ── Retry / watchdog parameters ─────────────────────────────────────────────
 MAX_RETRIES=${MAX_RETRIES:-10}  # max evaluator restart attempts per GPU before giving up
@@ -134,7 +142,11 @@ run_gpu() {
     local TM_PORT=$((BASE_TM_PORT + i * PORT_STEP))
     local GPU_RANK=${GPU_ARRAY[$i]}
     local ROUTES="${SPLIT_BASE}_${i}.xml"
-    local SAVE_PATH="${DATA_SAVE_DIR}/logs"
+    # Agent's SAVE_PATH output dir: the data dir exported above when SAVE_AGENT_DATA=1,
+    # otherwise the logs dir (per-route diagnostics kept alongside the run log).
+    # The run log (LOG_FILE) and results (CHECKPOINT_ENDPOINT) below are written via
+    # their own paths and are independent of this.
+    local AGENT_SAVE_PATH="${SAVE_PATH:-${DATA_SAVE_DIR}/logs}"
     local CHECKPOINT_ENDPOINT="${DATA_SAVE_DIR}/results/result_gpu${i}.json"
     local LOG_FILE="${DATA_SAVE_DIR}/logs/log_gpu${i}.log"
 
@@ -154,7 +166,7 @@ run_gpu() {
         CUDA_VISIBLE_DEVICES="${GPU_RANK}" \
         bash -e "${CARLA_GARAGE_ROOT}/../tools/leaderboard_local/evaluate_leaderboard.sh" \
             "${CARLA_HOST}" "${PORT}" "${TM_PORT}" "${ROUTES}" \
-            "${TEAM_AGENT}" "${TEAM_CONFIG}" "${CHECKPOINT_ENDPOINT}" "${SAVE_PATH}" \
+            "${TEAM_AGENT}" "${TEAM_CONFIG}" "${CHECKPOINT_ENDPOINT}" "${AGENT_SAVE_PATH}" \
             "${actual_resume}" "${CHALLENGE_TRACK_CODENAME}" "${LEADERBOARD_ROOT}" "${SCENARIO_RUNNER_ROOT}" \
             >> "${LOG_FILE}" 2>&1
 
