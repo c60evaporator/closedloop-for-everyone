@@ -4,13 +4,13 @@ Unlike birdview_map_opencv.py, this script does NOT launch CARLA itself.
 
 Usage:
     # Generate for a custom map (both 2ppm and 4ppm):
-    python tools/generate_bev_map.py --map_names <map_name>
+    python tools/tfpp/generate_bev_map.py --map_names <map_name>
 
     # Generate for multiple maps:
-    python tools/generate_bev_map.py --map_names <map_name1> <map_name2> ...
+    python tools/tfpp/generate_bev_map.py --map_names <map_name1> <map_name2> ...
 
     # Specify CARLA port and garage root:
-    python tools/generate_bev_map.py --port 2000 --carla_garage_root /workspace/carla_garage --map_names UE4_FIELD_TOWN
+    python tools/tfpp/generate_bev_map.py --port 2000 --carla_garage_root /workspace/carla_garage --map_names UE4_FIELD_TOWN
 """
 
 import argparse

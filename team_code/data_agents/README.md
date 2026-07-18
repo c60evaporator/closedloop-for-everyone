@@ -1,14 +1,12 @@
 # データ収集用ベースクラス
 
-実用上は、**オリジナルのセンサ構成でデータ収集**したい場合が多いでしょう。
-
-このようなケースに対応するため、データ収集エージェント作成用ベースクラス`GeneralizedDataAgent`を作成しました。
+高性能エージェントPDM-Liteで自動運転しつつ**オリジナルのセンサ構成でデータ収集**するための、データ収集エージェント作成用ベースクラス`GeneralizedDataAgent`を作成しました。
 
 このクラスを継承した自作クラスを作成し、`_sensors`メソッド内にオリジナルのセンサ構成を記述することで、自動運転のプランニングにPDM-Liteを使用したオリジナルのデータ収集エージェントを作成できます。
 
 ## 使用方法
 
-`GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成し、`COORDINATE_SYSTEM`等の各種クラス定数(詳細は後述)と`_sensors`メソッド内のセンサ構成を記述します。
+`GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成し、`COORDINATE_SYSTEM`等の各種クラス定数（[詳細は後]()述）と`_sensors`メソッド内のセンサ構成（[こちらも記載方法は後述]()）を記述します。
 
 例えばnuScenes形式でデータを出力するエージェント`data_agent_nuscenes.py`は以下のように作成できます。
 
@@ -72,8 +70,12 @@ class DataAgentNuScenes(GeneralizedDataAgent):
             'type': 'sensor.lidar.ray_cast',
             'x': 0.94 - REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
-            'rotation_frequency': 10,
-            'points_per_second': 600000,
+            'rotation_frequency': 20,
+            'points_per_second': 695000,
+            'channels': 32,
+            'range': 70,
+            'upper_fov': 10.67,
+            'lower_fov': -30.67,
             'id': 'LIDAR_TOP'
         }]
 ```
@@ -130,6 +132,91 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |---|---|---|
 |自車位置|`measurements/****.json.gz`の"pos_global"|`ego_pose.json`|
 |アノテーション位置|"matrix"||
+
+### センサ構成の記述方法
+
+|センサの種類|`_sensor()`メソッドに記載する`type`|
+|---|---|
+|RGBカメラ|`sensor.camera.rgb`|
+|LiDAR|`sensor.lidar.ray_cast`|
+|RADAR|`sensor.other.radar`|
+|Depthカメラ|`sensor.camera.depth`|
+|GNSS|`sensor.other.gnss`|
+
+全センサ共通で記述すべき必須パラメータは以下となります。
+
+|キー|意味|
+|---|---|
+|type|センサ種別|
+|id|センサID。データ保存フォルダ名(例: LIDAR_TOP/)やsensor_calibration.json のキーになる|
+|x, y, z|車両基準の取付位置 [m](CARLA座標系: x前方、y右、z上、原点は車両バウンディングボックス中心)|
+|roll, pitch, yaw|取付姿勢 [deg]|
+
+各センサごとに指定できるパラメータを以下に記載します
+
+#### RGBカメラ (sensor.camera.rgb)
+
+以下のキーはすべて必須です（省略すると`agent_wrapper_local.py`がKeyErrorを送出します）。
+
+|キー|意味|
+|---|---|
+|width|画像幅 [pixels]|
+|height|画像高さ [pixels]|
+|fov|水平視野角 [deg]|
+
+この3キーからカメラ内部パラメータ行列が計算され、`sensor_calibration.json`に`intrinsic`として記録されます。それ以外のCARLAカメラ属性（gamma、モーションブラー等）は指定できません。
+
+#### LiDAR (sensor.lidar.ray_cast)
+
+以下のキーはすべて省略可能で、省略時は下表のデフォルト値が使用されます。
+
+|キー|省略時のデフォルト|意味|
+|---|---|---|
+|rotation_frequency|10|回転周波数 [Hz]。シミュレーションが20Hzであることから、合成の都合上**20の約数を指定する必要**あり|
+|points_per_second|600000|秒間点数|
+|channels|64|ビーム(レーザー)本数|
+|range|85|最大測定距離 [m]|
+|upper_fov|10|上方視野角 [deg]|
+|lower_fov|-30|下方視野角 [deg]|
+|atmosphere_attenuation_rate|0.004|大気減衰係数(強度計算用)|
+|dropoff_general_rate|0.45|ランダムに落とす点の割合|
+|dropoff_intensity_limit|0.8|この強度以上の点はドロップ対象外|
+|dropoff_zero_intensity|0.4|強度ゼロの点をドロップする確率|
+
+なお、`rotation_frequency=20`の場合は取得した点群がそのまま保存されますが、それ以外の場合は以前に取得した点群と合成して360度点群が作成されます。例えば`rotation_frequency=5`の場合、1tick（1/20秒）では90度分の点群しか取得できないので、過去3tick分の点群も合成することで360度分の点群を作成し、これを`<id>/<frame>.laz`（または`<id>/<frame>.pcd.bin`）として保存します。
+
+補足:
+
+- `channels`や`rotation_frequency`を変更する場合、点群密度が実機相当になるよう`points_per_second`も合わせてスケールしてください（`points_per_second ≒ channels × 水平解像度 × rotation_frequency`）
+- 指定したビームパラメータは取付位置とともに`sensor_calibration.json`のlidarエントリに記録されます
+- `rotation_frequency`と`points_per_second`以外のキーの上書きは`tools/leaderboard_local/agent_wrapper_patches.py`のランタイムパッチで実現されており、`tools/collect_dataset_multi.sh`経由の実行では自動適用されます（CARLA Garage純正のevaluatorを直接実行した場合は無視されデフォルト値になるので注意）
+
+#### RADAR (sensor.other.radar)
+
+以下のキーはすべて必須です（省略すると`agent_wrapper_local.py`がKeyErrorを送出します）。
+
+|キー|意味|
+|---|---|
+|horizontal_fov|水平視野角 [deg]|
+|vertical_fov|垂直視野角 [deg]|
+
+以下のパラメータは`agent_wrapper_local.py`にハードコードされており、現状specから変更できません（LiDARと異なりランタイムパッチ未対応）。
+
+|パラメータ|固定値|意味|
+|---|---|---|
+|points_per_second|1500|秒間検出点数|
+|range|100|最大測定距離 [m]|
+
+#### Depthカメラ (sensor.camera.depth)
+
+RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wrapperは`sensor.camera.*`を共通処理するため）。深度は8bit正規化値のPNGとして保存されます。
+
+#### GNSS (sensor.other.gnss)
+
+追加で指定できるキーはありません。共通の必須パラメータは以下に注意してください。
+
+- 取付姿勢（`roll`, `pitch`, `yaw`）はwrapperにより無視され、常にゼロとして扱われます（位置`x`, `y`, `z`のみ有効）
+- 観測ノイズパラメータは`agent_wrapper_local.py`にハードコードされており変更できません（緯度/経度/高度の標準偏差 0.000005、バイアス 0.0）
 
 ## 保存データの形式
 

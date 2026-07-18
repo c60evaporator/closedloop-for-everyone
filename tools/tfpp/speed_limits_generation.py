@@ -1,6 +1,25 @@
 """
-This script is used to precompute the maps for the speed limits in CARLA.
-You have to start the CARLA simulator before executing this script.
+Precomputes the speed-limit map .npy file for a specified CARLA map using an
+already-running CARLA server (this script does NOT launch CARLA itself).
+
+Samples drivable waypoints every 1 m, resolves each waypoint's speed limit from
+the MaximumSpeed landmarks (with interpolation for waypoints where no landmark
+is reachable, and snapping to the 50/80/100/120 km/h classes), and saves
+    <output_dir>/<map_name>_speed_limits.npy
+containing {'speed_limits': (N,), 'locations': (N, 3)}.
+
+Usage:
+    # Generate for a single map (CARLA must be running on localhost:2000):
+    python tools/tfpp/speed_limits_generation.py --map_name <map_name>
+
+    # Specify CARLA port and output directory:
+    python tools/tfpp/speed_limits_generation.py --carla_port 2000 --map_name Town07 \
+        --output_dir ./carla_garage/team_code/speed_limits
+
+Note: the default --output_dir is relative to the working directory; run from
+the repository root so the file lands in carla_garage/team_code/speed_limits,
+where PDM-Lite's privileged_route_planner.py looks it up
+(team_code/speed_limits/<map_name>_speed_limits.npy).
 """
 
 import carla
