@@ -4,7 +4,9 @@
 This thin wrapper subclasses CarlaGarage's ``LeaderboardEvaluator`` (from
 ``leaderboard_evaluator_local.py``) and overrides ``_setup_simulation`` to fix
 a TOCTOU race when multiple GPU processes call ``find_free_port()``
-simultaneously.
+simultaneously. It also applies ``agent_wrapper_patches`` so that agents can
+override the LiDAR beam parameters hardcoded in ``agent_wrapper_local.py``
+through their sensor specs.
 
 Problem
 -------
@@ -39,6 +41,8 @@ import os
 # ─────────────────────────────────────────────────────────────────────────────
 from leaderboard.leaderboard_evaluator_local import LeaderboardEvaluator
 import leaderboard.leaderboard_evaluator_local as _orig_module
+
+from agent_wrapper_patches import apply_agent_wrapper_patches
 
 
 class _PatchedLeaderboardEvaluator(LeaderboardEvaluator):
@@ -137,6 +141,9 @@ def main():
     # Monkey-patch the module-level class so that all code inside
     # leaderboard_evaluator_local.py (including main()) uses the fixed class.
     _orig_module.LeaderboardEvaluator = _PatchedLeaderboardEvaluator
+    # Let agents override the LiDAR beam parameters hardcoded in
+    # agent_wrapper_local.py via their sensor specs (see agent_wrapper_patches).
+    apply_agent_wrapper_patches()
     _orig_module.main()
 
 

@@ -20,7 +20,12 @@ In addition, ground-truth bounding boxes (boxes/) and the sensor calibration
 be disabled with SAVE_BEV_SEMANTICS = False. LiDAR is optional: the BEV semantics
 are rendered from the simulator world state, not from LiDAR points. When LiDAR
 sensors are present, their mounting position/orientation is taken from the
-`_sensors()` spec; the `self.config.lidar_*` settings are not used.
+`_sensors()` spec; the `self.config.lidar_*` settings are not used. LiDAR beam
+parameters (channels, range, fov, rotation_frequency, ...) can also be set in the
+spec (see `_sensors()` and LIDAR_SPEC_DEFAULTS); each stored frame merges
+carla_fps / rotation_frequency motion-compensated partial sweeps into a full
+rotation, and the effective beam parameters are recorded in
+sensor_calibration.json.
 
 Storage settings (BEV raster size, LAZ compression, ...) are class attributes and
 can be overridden by redefining them in the subclass:
@@ -54,6 +59,7 @@ import gzip
 import laspy
 from pathlib import Path
 from abc import abstractmethod
+from collections import deque
 
 # The leaderboard evaluator only puts the agent file's own directory (data_agents/) on
 # sys.path; the upstream team_code modules (data_agent, autopilot, ...) live one level up.
@@ -68,6 +74,25 @@ from birds_eye_view.chauffeurnet import ObsManager
 from birds_eye_view.run_stop_sign import RunStopSign
 
 from agents.navigation.local_planner import LocalPlanner
+
+# Values that CARLA actually uses when a LiDAR spec omits the corresponding key.
+# Must stay in sync with the (unmodified, vendored) hardcoded attributes in
+# carla_garage/leaderboard_autopilot/leaderboard/autoagents/agent_wrapper_local.py;
+# specs may override them via tools/leaderboard_local/agent_wrapper_patches.py,
+# which is applied automatically on the collect_dataset launch path.
+LIDAR_SPEC_DEFAULTS = {
+    'range': 85,
+    'channels': 64,
+    'upper_fov': 10,
+    'lower_fov': -30,
+    'rotation_frequency': 10,
+    'points_per_second': 600000,
+    'atmosphere_attenuation_rate': 0.004,
+    'dropoff_general_rate': 0.45,
+    'dropoff_intensity_limit': 0.8,
+    'dropoff_zero_intensity': 0.4,
+}
+
 
 def get_entry_point():
     # This module only provides the abstract base class; point the leaderboard at a
@@ -113,9 +138,17 @@ class GeneralizedDataAgent(DataAgent):
         # Must return a static list: it is called during the base setup(), before the subclass setup() has finished.
         # Required spec keys (agent_wrapper_local.py raises KeyError otherwise):
         #   cameras: width, height, fov
-        #   lidar:   rotation_frequency, points_per_second (when DATAGEN=1; keep
-        #            rotation_frequency=10 so that tick()'s 2-sweep merge stays valid)
+        #   lidar:   rotation_frequency, points_per_second (when DATAGEN=1)
         #   radar:   horizontal_fov, vertical_fov
+        # Optional lidar keys (defaults in LIDAR_SPEC_DEFAULTS; overriding them requires
+        # the agent_wrapper_patches applied by leaderboard_evaluator_local_ext.py --
+        # without the patch they are silently ignored by the wrapper):
+        #   channels, range, upper_fov, lower_fov, atmosphere_attenuation_rate,
+        #   dropoff_general_rate, dropoff_intensity_limit, dropoff_zero_intensity
+        # rotation_frequency must be a divisor of config.carla_fps (20): tick() merges
+        # carla_fps / rotation_frequency partial sweeps into each stored frame. When
+        # changing channels or rotation_frequency, scale points_per_second accordingly
+        # (points_per_second ~= channels * horizontal_resolution * rotation_frequency).
         raise NotImplementedError
 
     def setup(self, path_to_conf_file, route_index=None, traffic_manager=None):
@@ -147,6 +180,15 @@ class GeneralizedDataAgent(DataAgent):
         self.radar_sensors = [s for s in self.custom_sensors if s['type'] == 'sensor.other.radar']
         self.gnss_sensors = [s for s in self.custom_sensors if s['type'] == 'sensor.other.gnss']
 
+        self.lidar_num_merge = {
+            lidar['id']: self._num_merge_sweeps(lidar, self.config.carla_fps) for lidar in self.lidar_sensors
+        }
+        # Buffers of the previous N-1 partial sweeps as (points, ego_transform) tuples,
+        # oldest first; filled in run_step, consumed by tick's merge.
+        self.lidar_history = {
+            lidar['id']: deque(maxlen=self.lidar_num_merge[lidar['id']] - 1) for lidar in self.lidar_sensors
+        }
+
         if self.save_path is not None and self.datagen:
             if self.SAVE_BEV_SEMANTICS:
                 (self.save_path / 'bev_semantics').mkdir()
@@ -160,8 +202,6 @@ class GeneralizedDataAgent(DataAgent):
         self.tmp_visu = int(os.environ.get('TMP_VISU', 0))
 
         self._active_traffic_light = None
-        self.last_lidar = {}
-        self.last_ego_transform = None
 
     @staticmethod
     def _extrinsic_carla(sensor):
@@ -257,7 +297,14 @@ class GeneralizedDataAgent(DataAgent):
                 'fov': camera['fov']
             }
         for lidar in self.lidar_sensors:
-            calibration['lidars'][lidar['id']] = self._extrinsic(lidar)
+            # Beam parameters are recorded alongside the extrinsics so downstream
+            # tooling knows the simulated LiDAR model; omitted keys fall back to the
+            # wrapper's hardcoded values (LIDAR_SPEC_DEFAULTS).
+            calibration['lidars'][lidar['id']] = {
+                'type': lidar['type'],
+                **self._extrinsic(lidar),
+                **{key: lidar.get(key, default) for key, default in LIDAR_SPEC_DEFAULTS.items()},
+            }
         for radar in self.radar_sensors:
             calibration['radars'][radar['id']] = self._extrinsic(radar)
 
@@ -331,6 +378,51 @@ class GeneralizedDataAgent(DataAgent):
 
         return np.concatenate((xyz, points[:, 3:]), axis=1)
 
+    @staticmethod
+    def _num_merge_sweeps(lidar, carla_fps):
+        """
+        Number of partial sweeps that make up one full LiDAR rotation: a LiDAR spinning
+        at rotation_frequency delivers 1/N of a sweep per simulation tick
+        (N = carla_fps / rotation_frequency); tick() merges the last N of them.
+        """
+        rotation_frequency = lidar.get('rotation_frequency', LIDAR_SPEC_DEFAULTS['rotation_frequency'])
+        num_merge = carla_fps / rotation_frequency if rotation_frequency > 0 else 0
+        if num_merge < 1 or abs(num_merge - round(num_merge)) > 1e-6:
+            raise ValueError(f"lidar '{lidar['id']}': carla_fps ({carla_fps}) must be a "
+                             f'positive integer multiple of rotation_frequency ({rotation_frequency})')
+        return int(round(num_merge))
+
+    @staticmethod
+    def _align_past_sweep(points, past_transform, current_transform):
+        """
+        Motion-compensate a buffered partial LiDAR sweep into the current ego frame.
+        :param points: (N, >=3) points in the ego frame at capture time
+        :param past_transform: carla.Transform of the ego at capture time
+        :param current_transform: carla.Transform of the ego now
+        :return: points expressed in the current ego frame; columns beyond xyz
+        (intensity, ...) are passed through unchanged.
+        """
+        current_location = current_transform.location
+        past_location = past_transform.location
+        relative_translation = np.array([
+            current_location.x - past_location.x, current_location.y - past_location.y,
+            current_location.z - past_location.z
+        ])
+
+        current_yaw = current_transform.rotation.yaw
+        past_yaw = past_transform.rotation.yaw
+        relative_rotation = np.deg2rad(t_u.normalize_angle_degree(current_yaw - past_yaw))
+
+        orientation_target = np.deg2rad(current_yaw)
+        # Rotate difference vector from global to local coordinate system.
+        rotation_matrix = np.array([[np.cos(orientation_target), -np.sin(orientation_target), 0.0],
+                                    [np.sin(orientation_target),
+                                     np.cos(orientation_target), 0.0], [0.0, 0.0, 1.0]])
+        relative_translation = rotation_matrix.T @ relative_translation
+
+        xyz = t_u.algin_lidar(points[:, :3], relative_translation, relative_rotation)
+        return np.concatenate((xyz, points[:, 3:]), axis=1)
+
     @classmethod
     def _box_to_nuscenes(cls, box):
         """
@@ -367,38 +459,26 @@ class GeneralizedDataAgent(DataAgent):
                            self.gnss_sensors):
                 result[sensor['id']] = None
 
-        # The 10 Hz LiDAR only delivers half a sweep each time step at 20 Hz.
-        # Here we combine the 2 sweeps into the same coordinate system
-        if self.last_lidar:
+        # A LiDAR spinning slower than the simulation tick rate only delivers a partial
+        # sweep per tick (1/N of a rotation, N = carla_fps / rotation_frequency). Combine
+        # the current partial sweep with the motion-compensated previous N-1 sweeps
+        # buffered in run_step into one full rotation. With rotation_frequency ==
+        # carla_fps the buffers are empty and the sweep passes through unchanged.
+        # During the first N-1 frames the buffers are still filling, so those frames
+        # only have partial azimuth coverage.
+        if self.lidar_sensors:
             ego_transform = self._vehicle.get_transform()
-            ego_location = ego_transform.location
-            last_ego_location = self.last_ego_transform.location
-            relative_translation = np.array([
-                ego_location.x - last_ego_location.x, ego_location.y - last_ego_location.y,
-                ego_location.z - last_ego_location.z
-            ])
-
-            ego_yaw = ego_transform.rotation.yaw
-            last_ego_yaw = self.last_ego_transform.rotation.yaw
-            relative_rotation = np.deg2rad(t_u.normalize_angle_degree(ego_yaw - last_ego_yaw))
-
-            orientation_target = np.deg2rad(ego_yaw)
-            # Rotate difference vector from global to local coordinate system.
-            rotation_matrix = np.array([[np.cos(orientation_target), -np.sin(orientation_target), 0.0],
-                                        [np.sin(orientation_target),
-                                        np.cos(orientation_target), 0.0], [0.0, 0.0, 1.0]])
-            relative_translation = rotation_matrix.T @ relative_translation
-
             for lidar in self.lidar_sensors:
-                last = self.last_lidar[lidar['id']]
-                # Align xyz only; the intensity column is carried over unchanged
-                lidar_last_xyz = t_u.algin_lidar(last[:, :3], relative_translation, relative_rotation)
-                lidar_last = np.concatenate((lidar_last_xyz, last[:, 3:]), axis=1)
-                # Combine back and front half of LiDAR
-                result[lidar['id']] = np.concatenate((input_data[lidar['id']], lidar_last), axis=0)
-        else:
-            for lidar in self.lidar_sensors:
-                result[lidar['id']] = input_data[lidar['id']]  # The first frame only has 1 half
+                history = self.lidar_history[lidar['id']]  # oldest -> newest
+                aligned = [
+                    self._align_past_sweep(points, past_transform, ego_transform)
+                    for points, past_transform in history
+                ]
+                if aligned:
+                    # Current sweep first, then the buffered ones newest to oldest
+                    result[lidar['id']] = np.concatenate([input_data[lidar['id']]] + aligned[::-1], axis=0)
+                else:
+                    result[lidar['id']] = input_data[lidar['id']]
 
         # Bounding box visibility (num_points) is computed against all LiDARs combined
         # (xyz only); without LiDAR, num_points is -1 for every box.
@@ -439,9 +519,12 @@ class GeneralizedDataAgent(DataAgent):
             if self.save_path is not None and self.datagen:
                 self.save_sensors(tick_data)
 
-        for lidar in self.lidar_sensors:
-            self.last_lidar[lidar['id']] = input_data[lidar['id']]
-        self.last_ego_transform = self._vehicle.get_transform()
+        # Buffer the ego-frame partial sweep with its capture transform for the merge
+        # in tick(); deque(maxlen=N-1) evicts the oldest automatically (no-op for N=1).
+        if self.lidar_sensors:
+            ego_transform = self._vehicle.get_transform()
+            for lidar in self.lidar_sensors:
+                self.lidar_history[lidar['id']].append((input_data[lidar['id']], ego_transform))
 
         if plant:
             # Control contains data when run with plant

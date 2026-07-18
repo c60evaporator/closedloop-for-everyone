@@ -74,15 +74,23 @@ class DataAgentNuScenes(GeneralizedDataAgent):
             # nuScenes ego frame). The real LIDAR_TOP is additionally rotated ~90 degrees
             # about z; yaw=0 is used instead, which stays consistent because the stored
             # point clouds and calibration share the same sensor frame.
-            # agent_wrapper_local.py requires rotation_frequency and points_per_second in
-            # the spec when DATAGEN=1; rotation_frequency must stay at 10 (half a sweep
-            # per 20 Hz tick) because GeneralizedDataAgent.tick merges 2 sweeps. The
-            # remaining beam parameters (channels=64, range=85, fov, ...) are hardcoded
-            # by the wrapper and cannot be set here.
+            # The beam parameters below approximate the nuScenes HDL-32E; override them
+            # to match your vehicle's LiDAR, keeping points_per_second ~= channels *
+            # horizontal_resolution * rotation_frequency. Keys beyond rotation_frequency
+            # and points_per_second are applied by agent_wrapper_patches.py (automatic on
+            # the collect_dataset launch path); omitted keys fall back to the wrapper's
+            # hardcoded values (see LIDAR_SPEC_DEFAULTS in generalized_data_agent.py).
+            # rotation_frequency must divide carla_fps (20): GeneralizedDataAgent.tick
+            # merges carla_fps / rotation_frequency partial sweeps per stored frame
+            # (at 20 Hz a full sweep arrives every tick, so no merging happens).
             'type': 'sensor.lidar.ray_cast',
             'x': 0.94 - REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
-            'rotation_frequency': 10,
-            'points_per_second': 600000,
+            'rotation_frequency': 20,
+            'points_per_second': 695000,
+            'channels': 32,
+            'range': 70,
+            'upper_fov': 10.67,
+            'lower_fov': -30.67,
             'id': 'LIDAR_TOP'
         }]
