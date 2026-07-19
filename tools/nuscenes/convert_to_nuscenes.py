@@ -32,9 +32,14 @@ Conversion decisions (agreed design):
     pipelines actually filter on).
   * annotation translation is taken directly from the box 'matrix':
     GeneralizedDataAgent.get_bounding_boxes stores the exact bounding-box
-    center (actor transform shifted by the actor-local bounding_box.location)
-    since the bbox-center fix; the ego_car matrix intentionally stays the
-    vehicle pose and feeds ego_pose.
+    center (actor transform shifted by the actor-local bounding_box.location);
+    the ego_car matrix is the EGO FRAME pose and feeds ego_pose. That ego frame
+    (and every calibrated_sensor translation) follows the nuScenes definition:
+    the ground below the rear axle center (REAR_AXLE_TO_CENTER in the agent),
+    so ego_pose (+) calibrated_sensor composes to the correct global sensor
+    pose with real-nuScenes-equivalent frame semantics. Data collected before
+    the rear-axle change (vehicle-origin ego frame) or before the bbox-center
+    fix is NOT compatible — re-collect such runs before converting.
 
 Usage:
     python tools/convert_to_nuscenes.py <run_dir> <output_dir> \

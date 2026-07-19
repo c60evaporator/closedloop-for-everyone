@@ -21,9 +21,11 @@ Conventions:
     set use_sim_time and consume /clock.
   - Global frame is "map": the right-handed COORDINATE_SYSTEM='nuscenes' global
     frame of GeneralizedDataAgent (CARLA world origin kept, y flipped).
-  - Ego frame is "base_link" (CARLA vehicle origin: bounding-box center in x/y,
-    ground level in z). Odometry twist is expressed in base_link per ROS
-    convention. Sensor frames are the spec ids; camera frames are optical
+  - Ego frame is "base_link": the nuScenes ego origin, i.e. the ground below the
+    rear axle center (the CARLA vehicle origin shifted back by the required
+    REAR_AXLE_TO_CENTER class constant). Odometry twist is expressed in
+    base_link per ROS convention, with the rigid-body velocity correction for
+    the origin shift. Sensor frames are the spec ids; camera frames are optical
     frames (consistent with the published CameraInfo intrinsics).
   - LiDAR: one full sweep per message. A LiDAR spinning at rotation_frequency
     (a divisor of carla_fps=20) publishes every N = 20/rotation_frequency ticks,
@@ -195,7 +197,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         for sensor in self.custom_sensors:
             extrinsic = self._extrinsic_nuscenes(sensor)
             transforms.append((sensor['id'], extrinsic['translation'], extrinsic['rotation']))
-        transforms.append(('imu', [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]))
+        # The parent-provided IMU mounts at the vehicle origin; relative to the
+        # rear-axle base_link that is [+d, 0, 0] (computed by _nuscenes_translation).
+        transforms.append(('imu', self._nuscenes_translation({'x': 0.0, 'y': 0.0, 'z': 0.0}),
+                           [1.0, 0.0, 0.0, 0.0]))
         self._pub_tf_static.publish(conv.tf_static_msg(transforms, conv.to_ros_time(0.0)))
 
     # ── LiDAR helpers ────────────────────────────────────────────────────────
@@ -254,7 +259,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                     conv.camera_info_msg(self._camera_intrinsics[cam_id], camera['width'], camera['height'],
                                          stamp, cam_id))
 
-        ego_transform = self._vehicle.get_transform()
+        # Ego-frame pose (rear-axle origin): the lidar points, the sweep motion
+        # compensation and the sensor extrinsics all use the same frame, so the
+        # sensor-frame PointCloud2 output is unaffected by the origin choice.
+        ego_transform = self._ego_transform()
         for lidar in self.lidar_sensors:
             lidar_id = lidar['id']
             window = self._lidar_window[lidar_id]
@@ -278,7 +286,7 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
 
         self._publish_vehicle_topics(input_data, control, stamp)
 
-        self._publish_ego_odom(ego_transform, stamp)
+        self._publish_ego_odom(stamp)
 
         if self._ros_tick % self.OBJECTS_PUBLISH_EVERY_N == 0:
             self._publish_objects(stamp)
@@ -307,25 +315,32 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         self._pub_reverse.publish(conv.bool_msg(control.reverse))
         self._pub_handbrake.publish(conv.bool_msg(control.hand_brake))
 
-    def _publish_ego_odom(self, ego_transform, stamp):
-        location = ego_transform.location
-        rotation = ego_transform.rotation
-        position = [location.x, -location.y, location.z]
+    def _publish_ego_odom(self, stamp):
+        # Ego frame = base_link: the ground below the rear axle center (see
+        # GeneralizedDataAgent._ego_matrix). Rotation equals the vehicle rotation.
+        raw_transform = self._vehicle.get_transform()
+        rotation = raw_transform.rotation
+        ego_matrix = self._ego_matrix()
+        position = [ego_matrix[0, 3], -ego_matrix[1, 3], ego_matrix[2, 3]]
         # Reuses the left->right-handed euler convention of the sensor
         # extrinsics (roll -> roll, pitch -> -pitch, yaw -> -yaw).
         quat = self._matrix_to_quaternion(self._nuscenes_rotation_matrix(
             {'roll': rotation.roll, 'pitch': rotation.pitch, 'yaw': rotation.yaw}))
 
-        # Twist in the child frame (base_link) per the Odometry convention:
-        # rotate the world vectors into the CARLA ego frame, then convert to
-        # right-handed (velocity is a true vector: flip y; angular velocity is
-        # a pseudovector: flip x and z).
-        rotation_matrix = np.array(ego_transform.get_matrix())[:3, :3]
+        # Twist in the child frame (base_link) per the Odometry convention.
+        # CARLA reports the velocity of the actor origin; the base_link point is
+        # offset by r = R @ [-d, 0, 0], so apply the rigid-body relation
+        # v_base = v_origin + omega x r before rotating into the ego frame and
+        # converting to right-handed (velocity is a true vector: flip y;
+        # angular velocity is a pseudovector: flip x and z).
+        rotation_matrix = np.array(raw_transform.get_matrix())[:3, :3]
         velocity = self._vehicle.get_velocity()
-        linear_ego = rotation_matrix.T @ np.array([velocity.x, velocity.y, velocity.z])
-        linear = [linear_ego[0], -linear_ego[1], linear_ego[2]]
         angular_velocity = self._vehicle.get_angular_velocity()  # deg/s, world axes
         angular_world = np.deg2rad([angular_velocity.x, angular_velocity.y, angular_velocity.z])
+        offset_world = rotation_matrix @ np.array([-self._ego_offset(), 0.0, 0.0])
+        velocity_world = np.array([velocity.x, velocity.y, velocity.z]) + np.cross(angular_world, offset_world)
+        linear_ego = rotation_matrix.T @ velocity_world
+        linear = [linear_ego[0], -linear_ego[1], linear_ego[2]]
         angular_ego = rotation_matrix.T @ angular_world
         angular = [-angular_ego[0], angular_ego[1], -angular_ego[2]]
 
@@ -341,8 +356,9 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         boxes = self.get_bounding_boxes(lidar=None)
         type_id_by_actor = {actor.id: actor.type_id for actor in self._actors}
         # GeneralizedDataAgent.get_bounding_boxes already shifts the boxes to
-        # their bounding-box centers, except ego_car whose matrix stays the
-        # vehicle pose (ego_pose source); lift only that one to its box center.
+        # their bounding-box centers, except ego_car whose matrix is the ego-frame
+        # (rear-axle) pose; lift that one to its box center: rear axle -> vehicle
+        # origin (+d in x) plus the actor-local bounding-box offset.
         ego_bbox_offset = self._vehicle.bounding_box.location
 
         detections = []
@@ -353,7 +369,8 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
             matrix = np.array(box['matrix'])
             center = matrix[:3, 3]
             if box['class'] == 'ego_car':
-                offset_right_handed = np.array([ego_bbox_offset.x, -ego_bbox_offset.y, ego_bbox_offset.z])
+                offset_right_handed = np.array([ego_bbox_offset.x + self._ego_offset(),
+                                                -ego_bbox_offset.y, ego_bbox_offset.z])
                 center = center + matrix[:3, :3] @ offset_right_handed
             detections.append({
                 'center_xyz': center,

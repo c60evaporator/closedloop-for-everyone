@@ -110,19 +110,19 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 
 自作クラス内で以下のクラス定数を定義することで、保存データの種類やフォーマットを変更することができます（重要な定数は太字で記載）。
 
-|定数名|型|内容|
-|---|---|---|
-|**`SAVE_BEV_SEMANTICS`**|bool|自車中心BEV形式のセマンティックマップを保存するか選択（TransFuser++等で使用）。これを保存しない場合、UniAD等のマップ情報を使用するモデルではnuScenes map expansion形式のようなセマンティックマップを別途準備する必要がある|
-|`BEV_RESOLUTION_WIDTH`|int|`SAVE_BEV_SEMANTICS`有効時のBEVラスタ幅 (pixels)。学習したいモデルと解像度を合わせる必要あり|
-|`BEV_RESOLUTION_HEIGHT`|int|`SAVE_BEV_SEMANTICS`有効時のBEVラスタ高さ (pixels)。学習したいモデルと解像度を合わせる必要あり|
-|**`LIDAR_FORMAT`**|str ("laz" | "pcd_bin")|LiDARデータの保存形式。`.laz `（CARLA Garage形式）と`.pcd.bin`（nuScenes形式）が選択可能|
-|`LAZ_POINT_FORMAT`|int|`LIDAR_FORMAT='laz'`のときに使用するパラメータ|
-|`LAZ_POINT_PRECISION`|float|`LIDAR_FORMAT='laz'`のときに使用するパラメータ|
-|**`COORDINATE_SYSTEM`**|str ("carla" | "nuscenes")|保存するデータの座標系をCARLA形式かnuScenes形式かを選択する|
+|定数名|必須|型|内容|
+|---|---|---|---|
+|**`REAR_AXLE_TO_CENTER`**|☑️|float|車両中心から後車軸までの距離（単位メートル）。Leaderboardのデフォルト車両Lincoln MKZを使用する場合は`1.42`を指定|
+|**`SAVE_BEV_SEMANTICS`**||bool|自車中心BEV形式のセマンティックマップを保存するか選択（TransFuser++等で使用）。これを保存しない場合、UniAD等のマップ情報を使用するモデルではnuScenes map expansion形式のようなセマンティックマップを別途準備する必要がある|
+|`BEV_RESOLUTION_WIDTH`||int|`SAVE_BEV_SEMANTICS`有効時のBEVラスタ幅 (pixels)。学習したいモデルと解像度を合わせる必要あり|
+|`BEV_RESOLUTION_HEIGHT`||int|`SAVE_BEV_SEMANTICS`有効時のBEVラスタ高さ (pixels)。学習したいモデルと解像度を合わせる必要あり|
+|**`LIDAR_FORMAT`**||str ("laz" | "pcd_bin")|LiDARデータの保存形式。`.laz `（CARLA Garage形式）と`.pcd.bin`（nuScenes形式）が選択可能|
+|`LAZ_POINT_FORMAT`||int|`LIDAR_FORMAT='laz'`のときに使用するパラメータ|
+|`LAZ_POINT_PRECISION`||float|`LIDAR_FORMAT='laz'`のときに使用するパラメータ|
+|**`COORDINATE_SYSTEM`**||str ("carla" | "nuscenes")|保存するデータの座標系をCARLA形式かnuScenes形式かを選択する|
 
-なお、`REAR_AXLE_TO_CENTER`は車両中心から後車軸までの距離（単位メートル）を表しますが、現状はLeaderboardのデフォルト車両Lincoln MKZを使用する前提で固定値`1.42`を設定します。
 
-重要なクラス変数について以下で詳細を解説します。
+特に重要なクラス変数に`COORDINATE_SYSTEM`ついて以下で詳細を解説します。
 
 ##### `COORDINATE_SYSTEM`変数（保存データの座標系の変更）
 
@@ -452,9 +452,10 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 
 自作クラス内で以下のクラス定数を定義する必要があります。
 
-|定数名|型|内容|
-|---|---|---|
-|**`TOPIC_NAMESPACE`**|str|出力されるセンサデータ等のトピックの名前空間。例えば`TOPIC_NAMESPACE="/nuscenes"`とした場合、idが"lidar_top"のRGBカメラのトピック名は`/nuscenes/`|
+|定数名|必須|型|内容|
+|---|---|---|---|
+|**`REAR_AXLE_TO_CENTER`**|☑️|float|車両中心から後車軸までの距離（単位メートル）。Leaderboardのデフォルト車両Lincoln MKZを使用する場合は`1.42`を指定|
+|**`TOPIC_NAMESPACE`**|☑️|str|出力されるセンサデータ等のトピックの名前空間。例えば`TOPIC_NAMESPACE="/nuscenes"`とした場合、idが"lidar_top"のRGBカメラのトピック名は`/nuscenes/`|
 
 #### センサ構成の記述
 
@@ -506,27 +507,3 @@ LiDAR点群の出力内容について以下補足します
 |`/clock`|rosgraph_msgs/Clock|-|-|シミュレーション時刻|
 |`/tf_static`|tf2_msgs/TFMessage|base_link（各センサがchild）|自車位置を原点とした相対座標|自車基準位置（base_link=後車軸の真下の地面）から各センサ位置までの相対座標|
 |`/tf`|tf2_msgs/TFMessage|map（base_linkがchild）|グローバル座標（ROS右手系）|自車基準位置（base_link）のグローバル座標|
-
-#### `<namespace>/vehicle/status`の出力内容について
-
-`<namespace>/vehicle/status`は以下のように速度・操舵・アクセル・ブレーキ情報を格納しています。
-
-```
-header:
-  stamp:
-    sec: 19
-    nanosec: 283
-  frame_id: ''
-name:
-- speed
-- steer
-- throttle
-- brake
-position:
-- 9.385041239810902e-05
-- -0.2701198160648346
-- 0.0
-- 1.0
-velocity: []
-effort: []
-```

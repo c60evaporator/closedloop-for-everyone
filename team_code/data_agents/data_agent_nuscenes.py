@@ -8,14 +8,6 @@ mounting position. Data is stored in nuScenes conventions (COORDINATE_SYSTEM =
 
 from generalized_data_agent import GeneralizedDataAgent
 
-# Offset used to convert nuScenes sensor mounting positions (v1.0 calibrated_sensor) to
-# CARLA coordinates.
-# nuScenes ego frame: x forward, y left, right-handed, origin at the rear axle center (ground level).
-# CARLA sensor frame: x forward, y right, left-handed, origin at the vehicle bounding box center.
-# Conversion: y_carla = -y_nuscenes, yaw_carla = -yaw_nuscenes, x_carla = x_nuscenes - REAR_AXLE_TO_CENTER.
-# z is measured from the ground in both frames.
-REAR_AXLE_TO_CENTER = 1.42  # Lincoln MKZ wheelbase (2.85 m) / 2
-
 
 def get_entry_point():
     return 'DataAgentNuScenes'
@@ -24,14 +16,28 @@ def get_entry_point():
 class DataAgentNuScenes(GeneralizedDataAgent):
     """
     Child of GeneralizedDataAgent with a nuScenes-style 6 camera + LiDAR rig.
+
+    Frame conventions: the _sensors() mounting positions below are the nuScenes v1.0
+    calibrated_sensor values converted to CARLA spawning coordinates
+    (x_carla = x_nuscenes - REAR_AXLE_TO_CENTER, y_carla = -y_nuscenes,
+    yaw_carla = -yaw_nuscenes; z is measured from the ground in both frames, and the
+    CARLA origin is the vehicle bounding-box center). Because the base class shifts
+    every nuScenes-mode output back to the rear-axle ego frame (REAR_AXLE_TO_CENTER),
+    the stored sensor_calibration.json translations round-trip to the ORIGINAL
+    nuScenes values (e.g. LIDAR_TOP [0.94, 0.0, 1.84]), and boxes/ + measurements/
+    are ego-referenced to the ground below the rear axle, like real nuScenes.
     """
 
     COORDINATE_SYSTEM = 'nuscenes'
     LIDAR_FORMAT = 'pcd_bin'
+    # Lincoln MKZ wheelbase (2.85 m) / 2: vehicle origin -> rear axle. Used by the
+    # base class for the rear-axle ego frame AND by _sensors() below to convert the
+    # nuScenes mounting positions to CARLA spawning coordinates.
+    REAR_AXLE_TO_CENTER = 1.42
 
     def _sensors(self):
         # Camera positions/orientations are the nuScenes rig converted to CARLA
-        # coordinates (see REAR_AXLE_TO_CENTER above); resolution is the nuScenes
+        # coordinates (see the class docstring); resolution is the nuScenes
         # 1600x900.
         return [{
             'type': 'sensor.camera.rgb',
@@ -84,7 +90,7 @@ class DataAgentNuScenes(GeneralizedDataAgent):
             # merges carla_fps / rotation_frequency partial sweeps per stored frame
             # (at 20 Hz a full sweep arrives every tick, so no merging happens).
             'type': 'sensor.lidar.ray_cast',
-            'x': 0.94 - REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
+            'x': 0.94 - self.REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
             'rotation_frequency': 20,
             'points_per_second': 695000,

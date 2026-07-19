@@ -15,10 +15,6 @@ Dockerfile_garage):
 
 from generalized_ros2_data_agent import GeneralizedROS2DataAgent
 
-# Offset used to convert nuScenes sensor mounting positions (v1.0 calibrated_sensor) to
-# CARLA coordinates; see data_agent_nuscenes.py for the full frame explanation.
-REAR_AXLE_TO_CENTER = 1.42  # Lincoln MKZ wheelbase (2.85 m) / 2
-
 
 def get_entry_point():
     return 'ROS2DataAgentNuScenes'
@@ -32,6 +28,11 @@ class ROS2DataAgentNuScenes(GeneralizedROS2DataAgent):
 
     # Required: namespace of every published topic except /clock, /tf, /tf_static.
     TOPIC_NAMESPACE = '/shasou'
+    # Lincoln MKZ wheelbase (2.85 m) / 2: vehicle origin -> rear axle. Used by the
+    # base classes for the rear-axle base_link frame AND by _sensors() below to
+    # convert the nuScenes mounting positions to CARLA spawning coordinates
+    # (see data_agent_nuscenes.py for the full frame explanation).
+    REAR_AXLE_TO_CENTER = 1.42
 
     def _sensors(self):
         return [{
@@ -77,7 +78,7 @@ class ROS2DataAgentNuScenes(GeneralizedROS2DataAgent):
             # divisor of 20 (e.g. 5) would publish one merged sweep every
             # 20/rotation_frequency ticks instead.
             'type': 'sensor.lidar.ray_cast',
-            'x': 0.94 - REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
+            'x': 0.94 - self.REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
             'rotation_frequency': 20,
             'points_per_second': 695000,

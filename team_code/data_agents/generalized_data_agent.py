@@ -35,7 +35,11 @@ can be overridden by redefining them in the subclass:
         LAZ_POINT_PRECISION = 0.001
 
 The output coordinate system is selected with COORDINATE_SYSTEM ('carla' | 'nuscenes').
-With 'nuscenes', sensor_calibration.json follows the nuScenes calibrated_sensor
+With 'nuscenes', the ego frame follows the nuScenes definition -- the ground below
+the rear axle center (set REAR_AXLE_TO_CENTER; sensor specs stay vehicle-origin
+based for CARLA spawning, every ego-frame output is shifted). The BEV semantics
+raster stays centered on the vehicle origin (TransFuser++ compatibility).
+sensor_calibration.json follows the nuScenes calibrated_sensor
 convention (right-handed ego frame, quaternion rotations, optical camera frames),
 LiDAR point clouds are stored in the right-handed LiDAR sensor frame and bounding
 boxes are converted to right-handed frames (y -> -y, yaw -> -yaw). Global coordinates
@@ -60,6 +64,7 @@ import laspy
 from pathlib import Path
 from abc import abstractmethod
 from collections import deque
+from types import SimpleNamespace
 
 # The leaderboard evaluator only puts the agent file's own directory (data_agents/) on
 # sys.path; the upstream team_code modules (data_agent, autopilot, ...) live one level up.
@@ -126,11 +131,21 @@ class GeneralizedDataAgent(DataAgent):
     LAZ_POINT_PRECISION = 0.01
 
     # Output coordinate system for sensor_calibration.json, LiDAR point clouds and boxes/.
-    # 'carla': store everything in CARLA's left-handed convention as-is.
-    # 'nuscenes': store nuScenes-convention data (right-handed; see the module docstring).
+    # 'carla': store everything in CARLA's left-handed convention as-is; the ego frame
+    #   is the CARLA vehicle origin (bounding-box center in x/y, ground in z).
+    # 'nuscenes': store nuScenes-convention data (right-handed; see the module docstring);
+    #   the ego frame follows the nuScenes definition -- the ground below the REAR AXLE
+    #   center (requires REAR_AXLE_TO_CENTER) -- for boxes/, measurements/,
+    #   sensor_calibration.json and the ego-frame LiDAR processing alike.
     #   Global coordinates keep CARLA's world origin; the shift to a per-town map origin
     #   belongs to the post-processing that generates the nuScenes map/tables.
     COORDINATE_SYSTEM = 'carla'
+
+    # Distance [m] from the CARLA vehicle origin (bbox center) back to the rear axle.
+    # Required when COORDINATE_SYSTEM='nuscenes'; ignored for 'carla'. The sensor
+    # specs in _sensors() stay vehicle-origin based (CARLA spawning convention);
+    # this constant shifts every ego-frame output to the rear-axle origin.
+    REAR_AXLE_TO_CENTER = None
 
     @abstractmethod
     def _sensors(self):
@@ -154,6 +169,10 @@ class GeneralizedDataAgent(DataAgent):
     def setup(self, path_to_conf_file, route_index=None, traffic_manager=None):
         if self.COORDINATE_SYSTEM not in ('carla', 'nuscenes'):
             raise ValueError(f'Unsupported COORDINATE_SYSTEM: {self.COORDINATE_SYSTEM}')
+        if self.COORDINATE_SYSTEM == 'nuscenes' and self.REAR_AXLE_TO_CENTER is None:
+            raise ValueError("COORDINATE_SYSTEM='nuscenes' requires the REAR_AXLE_TO_CENTER class "
+                             'constant (distance [m] from the vehicle origin back to the rear axle; '
+                             'the nuScenes ego origin is the ground below the rear axle center).')
         if self.LIDAR_FORMAT not in ('laz', 'pcd_bin'):
             raise ValueError(f'Unsupported LIDAR_FORMAT: {self.LIDAR_FORMAT}')
         # Skip DataAgent.setup, which creates the fixed TransFuser sensor folders;
@@ -203,6 +222,32 @@ class GeneralizedDataAgent(DataAgent):
 
         self._active_traffic_light = None
 
+    # ── Ego frame ────────────────────────────────────────────────────────────
+    # 'carla': the CARLA vehicle origin. 'nuscenes': the ground below the rear
+    # axle center (vehicle origin shifted back by REAR_AXLE_TO_CENTER; the
+    # origin z is already at ground level, so only x shifts).
+
+    def _ego_offset(self):
+        """Distance [m] from the CARLA vehicle origin back to the ego-frame origin."""
+        return self.REAR_AXLE_TO_CENTER if self.COORDINATE_SYSTEM == 'nuscenes' else 0.0
+
+    def _ego_matrix(self):
+        """4x4 world matrix of the ego frame (vehicle transform shifted by _ego_offset)."""
+        matrix = np.array(self._vehicle.get_transform().get_matrix())
+        matrix[:3, 3] += matrix[:3, :3] @ np.array([-self._ego_offset(), 0.0, 0.0])
+        return matrix
+
+    def _ego_transform(self):
+        """Ego-frame pose for _align_past_sweep (only location and rotation.yaw are
+        consumed); same shift as _ego_matrix."""
+        transform = self._vehicle.get_transform()
+        if self._ego_offset() == 0.0:
+            return transform
+        matrix = self._ego_matrix()
+        return SimpleNamespace(
+            location=SimpleNamespace(x=float(matrix[0, 3]), y=float(matrix[1, 3]), z=float(matrix[2, 3])),
+            rotation=transform.rotation)
+
     @staticmethod
     def _extrinsic_carla(sensor):
         # Mounting position relative to the vehicle in CARLA coordinates (x fwd, y right, z up)
@@ -217,10 +262,10 @@ class GeneralizedDataAgent(DataAgent):
     # right-handed equivalent (y left). Its own inverse.
     _Y_FLIP = np.diag([1.0, -1.0, 1.0, 1.0])
 
-    @staticmethod
-    def _nuscenes_translation(sensor):
-        # CARLA mounting position (left-handed, y right) -> right-handed ego frame (y left)
-        return [sensor.get('x', 0.0), -sensor.get('y', 0.0), sensor.get('z', 0.0)]
+    def _nuscenes_translation(self, sensor):
+        # CARLA mounting position (left-handed, y right, vehicle origin) ->
+        # right-handed ego frame (y left, rear-axle origin in nuScenes mode).
+        return [sensor.get('x', 0.0) + self._ego_offset(), -sensor.get('y', 0.0), sensor.get('z', 0.0)]
 
     @staticmethod
     def _nuscenes_rotation_matrix(sensor):
@@ -342,22 +387,23 @@ class GeneralizedDataAgent(DataAgent):
 
         return result
 
-    @staticmethod
-    def lidar_to_ego_coordinate(lidar, sensor_spec):
+    def lidar_to_ego_coordinate(self, lidar, sensor_spec):
         """
         Converts the LiDAR points given by the simulator into the ego agent's coordinate
         system, using the mounting position/yaw from the `_sensors()` spec (unlike
         t_u.lidar_to_ego_coordinate, which reads config.lidar_pos / config.lidar_rot).
         :param lidar: the LiDAR point cloud as provided in the input of run_step
         :param sensor_spec: the sensor specification dict of this LiDAR
-        :return: (N, 4) array (x, y, z, intensity) where the points are w.r.t. 0/0/0 of
-        the car and the carla coordinate system. The intensity column is kept as-is.
+        :return: (N, 4) array (x, y, z, intensity) where the points are w.r.t. the ego
+        frame origin (vehicle origin, or the rear axle in nuScenes mode) in the carla
+        coordinate system. The intensity column is kept as-is.
         """
         yaw = np.deg2rad(sensor_spec.get('yaw', 0.0))
         rotation_matrix = np.array([[np.cos(yaw), -np.sin(yaw), 0.0], [np.sin(yaw), np.cos(yaw), 0.0],
                                     [0.0, 0.0, 1.0]])
 
-        translation = np.array([sensor_spec.get('x', 0.0), sensor_spec.get('y', 0.0), sensor_spec.get('z', 0.0)])
+        translation = np.array([sensor_spec.get('x', 0.0) + self._ego_offset(),
+                                sensor_spec.get('y', 0.0), sensor_spec.get('z', 0.0)])
 
         points = lidar[1]
         # The double transpose is a trick to compute all the points together.
@@ -445,11 +491,12 @@ class GeneralizedDataAgent(DataAgent):
         level, half a box below the true center, while nuScenes annotations
         (sample_annotation.translation) use the bounding-box center. Shift those
         boxes by the actor-local carla bounding_box.location offset (walkers, whose
-        origin is already at the body center, get a ~zero offset automatically).
-        Left as-is: traffic_light / stop_sign (their matrix is already a box-volume
-        center) and ego_car (its matrix doubles as the vehicle pose that downstream
-        tooling converts into ego_pose). num_points is computed after the shift so
-        the visibility counts match the stored box positions.
+        origin is already at the body center, get a ~zero offset automatically);
+        traffic_light / stop_sign matrices are already box-volume centers.
+        The ego_car matrix is the EGO FRAME pose (the ego_pose source): the vehicle
+        origin, or the ground below the rear axle in nuScenes mode. All 'position'
+        values are relative to that ego frame, and num_points is computed in the
+        same frame (lidar_to_ego_coordinate applies the matching shift).
         """
         boxes = super().get_bounding_boxes(lidar=None)
 
@@ -459,18 +506,63 @@ class GeneralizedDataAgent(DataAgent):
             if bounding_box is not None:
                 offsets[actor.id] = bounding_box.location
 
-        ego_matrix = np.array(self._vehicle.get_transform().get_matrix())
+        ego_matrix = self._ego_matrix()
         for box in boxes:
+            if box['class'] == 'ego_car':
+                box['matrix'] = ego_matrix.tolist()
+                box['position'] = [0.0, 0.0, 0.0]
+                continue
             offset = offsets.get(box.get('id'))
-            if offset is not None and box['class'] not in ('ego_car', 'traffic_light', 'stop_sign'):
-                matrix = np.array(box['matrix'])
+            matrix = np.array(box['matrix'])
+            if offset is not None and box['class'] not in ('traffic_light', 'stop_sign'):
                 matrix[:3, 3] += matrix[:3, :3] @ np.array([offset.x, offset.y, offset.z])
                 box['matrix'] = matrix.tolist()
+            if 'position' in box:
                 box['position'] = t_u.get_relative_transform(ego_matrix, matrix).tolist()
-            if lidar is not None and 'num_points' in box and box['class'] != 'ego_car':
+            if lidar is not None and 'num_points' in box:
                 box['num_points'] = int(
                     self.get_points_in_bbox(np.array(box['position']), box['yaw'], box['extent'], lidar))
         return boxes
+
+    def save(self, target_point, next_target_point, steering, throttle, brake, control_brake,
+             target_speed, speed_limit, tick_data, speed_reduced_by_obj):
+        """
+        AutoPilot.save computes the measurements dict relative to the vehicle origin
+        (pos_global/theta from GPS/compass, the ego-local route/target points via
+        inverse_conversion_2d, ego_matrix from the actor transform) and writes
+        measurements/<frame>.json.gz itself. In nuScenes mode, shift the ego-dependent
+        fields to the rear-axle ego frame and overwrite the file that super() wrote.
+        Handedness and the global origin stay CARLA (only the ego origin definition
+        changes), matching the documented measurements/ convention.
+        """
+        data = super().save(target_point, next_target_point, steering, throttle, brake, control_brake,
+                            target_speed, speed_limit, tick_data, speed_reduced_by_obj)
+        offset = self._ego_offset()
+        if data is None or offset == 0.0:
+            return data
+
+        # Global 2D ego position: move back along the heading. theta is unchanged.
+        theta = data['theta']
+        heading = np.array([np.cos(theta), np.sin(theta)])
+        data['pos_global'] = (np.array(data['pos_global']) - offset * heading).tolist()
+        # Ego-local 2D points: with the origin moved back by `offset` along the ego
+        # x axis, every local coordinate gains +offset in x (exact:
+        # R(-theta) @ (offset * heading) = [offset, 0]).
+        for key in ('target_point', 'target_point_next', 'aim_wp'):
+            data[key] = [data[key][0] + offset, data[key][1]]
+        for key in ('route', 'route_original'):
+            data[key] = [[point[0] + offset, point[1]] for point in data[key]]
+        ego_matrix = np.array(data['ego_matrix'])
+        ego_matrix[:3, 3] += ego_matrix[:3, :3] @ np.array([-offset, 0.0, 0.0])
+        data['ego_matrix'] = ego_matrix.tolist()
+
+        # Overwrite the file super() wrote, under the same gate it used.
+        if self.step % self.config.data_save_freq == 0 and self.save_path is not None and self.datagen:
+            frame = self.step // self.config.data_save_freq
+            with gzip.open(self.save_path / 'measurements' / f'{frame:04}.json.gz', 'wt', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+
+        return data
 
     def tick(self, input_data):
         result = {}
@@ -501,7 +593,7 @@ class GeneralizedDataAgent(DataAgent):
         # During the first N-1 frames the buffers are still filling, so those frames
         # only have partial azimuth coverage.
         if self.lidar_sensors:
-            ego_transform = self._vehicle.get_transform()
+            ego_transform = self._ego_transform()
             for lidar in self.lidar_sensors:
                 history = self.lidar_history[lidar['id']]  # oldest -> newest
                 aligned = [
@@ -556,7 +648,7 @@ class GeneralizedDataAgent(DataAgent):
         # Buffer the ego-frame partial sweep with its capture transform for the merge
         # in tick(); deque(maxlen=N-1) evicts the oldest automatically (no-op for N=1).
         if self.lidar_sensors:
-            ego_transform = self._vehicle.get_transform()
+            ego_transform = self._ego_transform()
             for lidar in self.lidar_sensors:
                 self.lidar_history[lidar['id']].append((input_data[lidar['id']], ego_transform))
 
