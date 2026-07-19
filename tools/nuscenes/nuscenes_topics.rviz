@@ -87,6 +87,8 @@ Visualization Manager:
     - Class: vision_msgs_rviz_plugins/Detection3DArray
       Enabled: true
       Name: gt_objects
+      Alpha: 0.5
+      Line Width: 0.1
       Topic:
         Depth: 5
         Durability Policy: Volatile

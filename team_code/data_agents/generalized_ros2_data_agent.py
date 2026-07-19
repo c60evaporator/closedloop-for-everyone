@@ -303,6 +303,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         # (ego, walkers, traffic lights, stop signs).
         boxes = self.get_bounding_boxes(lidar=None)
         type_id_by_actor = {actor.id: actor.type_id for actor in self._actors}
+        # GeneralizedDataAgent.get_bounding_boxes already shifts the boxes to
+        # their bounding-box centers, except ego_car whose matrix stays the
+        # vehicle pose (ego_pose source); lift only that one to its box center.
+        ego_bbox_offset = self._vehicle.bounding_box.location
 
         detections = []
         for box in boxes:
@@ -310,8 +314,12 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                 continue
             box = self._box_to_nuscenes(box)
             matrix = np.array(box['matrix'])
+            center = matrix[:3, 3]
+            if box['class'] == 'ego_car':
+                offset_right_handed = np.array([ego_bbox_offset.x, -ego_bbox_offset.y, ego_bbox_offset.z])
+                center = center + matrix[:3, :3] @ offset_right_handed
             detections.append({
-                'center_xyz': matrix[:3, 3],
+                'center_xyz': center,
                 'quat_wxyz': self._matrix_to_quaternion(matrix[:3, :3]),
                 'size_xyz': [2.0 * extent for extent in box['extent']],
                 'actor_id': box['id'],

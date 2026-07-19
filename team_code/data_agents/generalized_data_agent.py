@@ -438,6 +438,40 @@ class GeneralizedDataAgent(DataAgent):
 
         return box
 
+    def get_bounding_boxes(self, lidar=None):
+        """
+        DataAgent.get_bounding_boxes stores each actor's transform origin as the box
+        'position'/'matrix'. For vehicles and statics that origin sits at ground
+        level, half a box below the true center, while nuScenes annotations
+        (sample_annotation.translation) use the bounding-box center. Shift those
+        boxes by the actor-local carla bounding_box.location offset (walkers, whose
+        origin is already at the body center, get a ~zero offset automatically).
+        Left as-is: traffic_light / stop_sign (their matrix is already a box-volume
+        center) and ego_car (its matrix doubles as the vehicle pose that downstream
+        tooling converts into ego_pose). num_points is computed after the shift so
+        the visibility counts match the stored box positions.
+        """
+        boxes = super().get_bounding_boxes(lidar=None)
+
+        offsets = {}
+        for actor in self._actors:
+            bounding_box = getattr(actor, 'bounding_box', None)
+            if bounding_box is not None:
+                offsets[actor.id] = bounding_box.location
+
+        ego_matrix = np.array(self._vehicle.get_transform().get_matrix())
+        for box in boxes:
+            offset = offsets.get(box.get('id'))
+            if offset is not None and box['class'] not in ('ego_car', 'traffic_light', 'stop_sign'):
+                matrix = np.array(box['matrix'])
+                matrix[:3, 3] += matrix[:3, :3] @ np.array([offset.x, offset.y, offset.z])
+                box['matrix'] = matrix.tolist()
+                box['position'] = t_u.get_relative_transform(ego_matrix, matrix).tolist()
+            if lidar is not None and 'num_points' in box and box['class'] != 'ego_car':
+                box['num_points'] = int(
+                    self.get_points_in_bbox(np.array(box['position']), box['yaw'], box['extent'], lidar))
+        return boxes
+
     def tick(self, input_data):
         result = {}
 

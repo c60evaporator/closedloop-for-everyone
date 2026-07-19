@@ -30,10 +30,11 @@ Conversion decisions (agreed design):
   * visibility is a heuristic binning of the LiDAR hit count; the exact count
     is stored in sample_annotation.num_lidar_pts (the field UniAD-style
     pipelines actually filter on).
-  * annotation translation is the actor origin shifted by +extent_z along the
-    actor's up axis: CARLA actor origins sit at ground level while nuScenes
-    boxes are centered; the exact bounding-box center offset is not recorded
-    during collection, so this is a documented approximation.
+  * annotation translation is taken directly from the box 'matrix':
+    GeneralizedDataAgent.get_bounding_boxes stores the exact bounding-box
+    center (actor transform shifted by the actor-local bounding_box.location)
+    since the bbox-center fix; the ego_car matrix intentionally stays the
+    vehicle pose and feeds ego_pose.
 
 Usage:
     python tools/convert_to_nuscenes.py <run_dir> <output_dir> \
@@ -442,9 +443,11 @@ def convert(args):
                     continue
                 category, is_parked = mapped
                 matrix = np.array(box['matrix'])
-                # Actor origin -> box center: shift by extent_z along the
-                # actor's up axis (see module docstring for the approximation).
-                center = matrix[:3, 3] + matrix[:3, :3] @ np.array([0.0, 0.0, box['extent'][2]]) + offset
+                # box['matrix'] already carries the bounding-box center:
+                # GeneralizedDataAgent.get_bounding_boxes shifts vehicle/static
+                # boxes by the actor-local bounding_box.location offset during
+                # collection.
+                center = matrix[:3, 3] + offset
                 num_points = max(0, int(box.get('num_points', 0)))
                 attribute = attribute_for_box(category, is_parked, box.get('speed', 0.0))
                 ann_token = token(run_name, scene_name, 'annotation', box['id'], frame)
