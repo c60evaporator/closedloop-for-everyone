@@ -4,7 +4,7 @@ services:
     # docker build options
     build:
       context: .
-      dockerfile: Dockerfile_garage
+      dockerfile: Dockerfile_garage_b2dzoo
       # --build-arg option
       args:
         # CUDA and Ubuntu Versions
