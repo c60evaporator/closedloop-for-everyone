@@ -11,11 +11,19 @@
 
 収集したセンサデータを**ファイル保存**するエージェントのベースクラスです
 
-### 使用方法
+### 自作エージェント作成方法
 
-`GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成し、`COORDINATE_SYSTEM`等の各種クラス定数（[詳細は後]()述）と`_sensors`メソッド内のセンサ構成（[こちらも記載方法は後述]()）を記述します。
+以下の手順で自作エージェントを作成します
 
-例えばnuScenes形式でデータを出力するエージェント`data_agent_nuscenes.py`は以下のように作成できます。
+- 自作クラスファイルの作成：`GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成する
+- クラス定数の記述：自作クラスの冒頭にクラス定数を適切に記述する
+- センサ構成の記述：自作クラスの`_sensors`メソッド内にセンサ構成を記述する
+
+#### 自作クラスファイルの作成
+
+`GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成し、`COORDINATE_SYSTEM`等の各種クラス定数（[詳細は後述]()）と`_sensors`メソッド内のセンサ構成（[こちらも記載方法は後述]()）を記述します。
+
+例えばnuScenesのセンサ構成でデータを出力するエージェント`data_agent_nuscenes.py`は以下のように作成できます。
 
 ```python
 from generalized_data_agent import GeneralizedDataAgent
@@ -25,17 +33,14 @@ REAR_AXLE_TO_CENTER = 1.42  # Lincoln MKZ wheelbase (2.85 m) / 2
 def get_entry_point():
     return 'DataAgentNuScenes'
 
-
 class DataAgentNuScenes(GeneralizedDataAgent):
     """
     Child of GeneralizedDataAgent with a nuScenes-style 6 camera + LiDAR rig.
     """
-
     COORDINATE_SYSTEM = 'nuscenes'
     LIDAR_FORMAT = 'pcd_bin'
 
     def _sensors(self):
-        # Camera positions/orientations are the nuScenes rig converted to CARLA coordinates.
         return [{
             'type': 'sensor.camera.rgb',
             'x': 0.28, 'y': 0.0, 'z': 1.51,
@@ -101,7 +106,7 @@ TEAM_AGENT=team_code/data_agents/data_agent_nuscenes.py \
 bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 ```
 
-#### クラス定数
+#### クラス定数の記述
 
 自作クラス内で以下のクラス定数を定義することで、保存データの種類やフォーマットを変更することができます（重要な定数は太字で記載）。
 
@@ -115,7 +120,11 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |`LAZ_POINT_PRECISION`|float|`LIDAR_FORMAT='laz'`のときに使用するパラメータ|
 |**`COORDINATE_SYSTEM`**|str ("carla" | "nuscenes")|保存するデータの座標系をCARLA形式かnuScenes形式かを選択する|
 
-##### 保存データの座標系
+なお、`REAR_AXLE_TO_CENTER`は車両中心から後車軸までの距離（単位メートル）を表しますが、現状はLeaderboardのデフォルト車両Lincoln MKZを使用する前提で固定値`1.42`を設定します。
+
+重要なクラス変数について以下で詳細を解説します。
+
+##### `COORDINATE_SYSTEM`変数（保存データの座標系の変更）
 
 クラス属性`COORDINATE_SYSTEM`の値を変えることで、以下のように出力される座標系を変更することができます。
 
@@ -140,7 +149,33 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |自車位置|`measurements/****.json.gz`の"pos_global"|`ego_pose.json`|
 |アノテーション位置|"matrix"||
 
-#### センサ構成の記述方法
+#### センサ構成の記述
+
+センサ構成は、`_sensor()`メソッドにdict形式のリストとして記述していきます。例えば以下記述ではカメラとLiDARが1個ずつ設置されます。
+
+```python
+    def _sensors(self):
+        return [{
+            'type': 'sensor.camera.rgb',
+            'x': 0.28, 'y': 0.0, 'z': 1.51,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'width': 1600, 'height': 900, 'fov': 70,
+            'id': 'CAM_FRONT'
+        }, {
+            'type': 'sensor.lidar.ray_cast',
+            'x': 0.94 - REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'rotation_frequency': 20,
+            'points_per_second': 695000,
+            'channels': 32,
+            'range': 70,
+            'upper_fov': 10.67,
+            'lower_fov': -30.67,
+            'id': 'LIDAR_TOP'
+        }]
+```
+
+センサの種類は以下から選ぶことができます。
 
 |センサの種類|`_sensor()`メソッドに記載する`type`|
 |---|---|
@@ -314,6 +349,184 @@ RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wr
 
 収集したセンサデータを**ROS2 Topicで出力**するエージェントのベースクラスです
 
-### 使用方法
+### 自作エージェント作成方法
 
+以下の手順で自作エージェントを作成します
 
+- 自作クラスファイルの作成：`GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成する
+- クラス定数の記述：自作クラスの冒頭にクラス定数を適切に記述する
+- センサ構成の記述：自作クラスの`_sensors`メソッド内にセンサ構成を記述する
+
+#### 自作クラスファイルの作成
+
+`GeneralizedROS2DataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成し、`TOPIC_NAMESPACE`等の各種クラス定数（[詳細は後述]()）と、`_sensors`メソッド内のセンサ構成（[GeneralizedDataAgentの記載方法]()と同様）を記述します。なお、出力されるTopicのフォーマットはROS2の定義に従うため、フォーマットを指定するためのクラス定数の記述は不要です。
+
+例えばnuScenes形式でデータをTopic出力するエージェント`ros2_data_agent_nuscenes.py`は以下のように作成できます。
+
+```python
+from generalized_ros2_data_agent import GeneralizedROS2DataAgent
+
+REAR_AXLE_TO_CENTER = 1.42  # Lincoln MKZ wheelbase (2.85 m) / 2
+
+def get_entry_point():
+    return 'ROS2DataAgentNuScenes'
+
+class ROS2DataAgentNuScenes(GeneralizedROS2DataAgent):
+    """
+    Child of GeneralizedROS2DataAgent with a nuScenes-style 6 camera + LiDAR + GNSS rig.
+    """
+    TOPIC_NAMESPACE = '/nuscenes'
+
+    def _sensors(self):
+        return [{
+            'type': 'sensor.camera.rgb',
+            'x': 0.28, 'y': 0.0, 'z': 1.51,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'width': 1600, 'height': 900, 'fov': 70,
+            'id': 'cam_front'
+        }, {
+            'type': 'sensor.camera.rgb',
+            'x': 0.15, 'y': -0.50, 'z': 1.52,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': -55.0,
+            'width': 1600, 'height': 900, 'fov': 70,
+            'id': 'cam_front_left'
+        }, {
+            'type': 'sensor.camera.rgb',
+            'x': 0.16, 'y': 0.50, 'z': 1.52,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 55.0,
+            'width': 1600, 'height': 900, 'fov': 70,
+            'id': 'cam_front_right'
+        }, {
+            'type': 'sensor.camera.rgb',
+            'x': -1.37, 'y': 0.0, 'z': 1.57,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 180.0,
+            'width': 1600, 'height': 900, 'fov': 110,
+            'id': 'cam_back'
+        }, {
+            'type': 'sensor.camera.rgb',
+            'x': -0.38, 'y': -0.48, 'z': 1.56,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': -110.0,
+            'width': 1600, 'height': 900, 'fov': 70,
+            'id': 'cam_back_left'
+        }, {
+            'type': 'sensor.camera.rgb',
+            'x': -0.36, 'y': 0.47, 'z': 1.61,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 110.0,
+            'width': 1600, 'height': 900, 'fov': 70,
+            'id': 'cam_back_right'
+        }, {
+            'type': 'sensor.lidar.ray_cast',
+            'x': 0.94 - REAR_AXLE_TO_CENTER, 'y': 0.0, 'z': 1.84,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'rotation_frequency': 20,
+            'points_per_second': 695000,
+            'channels': 32,
+            'range': 70,
+            'upper_fov': 10.67,
+            'lower_fov': -30.67,
+            'id': 'lidar_top'
+        }, {
+            # Global Planが必要な実車に合わせるためGNSSデータも出力
+            'type': 'sensor.other.gnss',
+            'x': 0.0, 'y': 0.0, 'z': 0.0,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'id': 'gnss'
+        }]
+```
+
+実行時は、Dockerコンテナ内から以下コマンドを打つことで作成したエージェントを用いたデータ収集が始まります。
+
+```bash
+TEAM_AGENT=team_code/data_agents/<作成したAgentのファイル名> \
+bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
+```
+
+例えば上のROS2DataAgentNuScenesを使用する場合、以下を実行します。
+
+```bash
+TEAM_AGENT=team_code/data_agents/ros2_data_agent_nuscenes.py \
+bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
+```
+
+#### クラス定数の記述
+
+自作クラス内で以下のクラス定数を定義する必要があります。
+
+|定数名|型|内容|
+|---|---|---|
+|**`TOPIC_NAMESPACE`**|str|出力されるセンサデータ等のトピックの名前空間。例えば`TOPIC_NAMESPACE="/nuscenes"`とした場合、idが"lidar_top"のRGBカメラのトピック名は`/nuscenes/`|
+
+#### センサ構成の記述
+
+センサ構成は、[GeneralizedDataAgentと同様のフォーマット]()で、`_sensor()`メソッドにdict形式のリストとして記述します。
+
+### 出力されるTopicの形式
+
+#### センサデータ
+
+各センサデータは以下の形式でTopic出力されます
+
+|センサの種類|`_sensor()`メソッドに記載する`type`|Topic名|Topic型|frame_id|座標系|
+|---|---|---|---|---|---|
+|RGBカメラ（画像本体）|`sensor.camera.rgb`|`<namsepace>/<id>/image_raw/compressed`|sensor_msgs/CompressedImage|<id>|-|
+|RGBカメラ（内部パラメータ）|`sensor.camera.rgb`|`<namsepace>/<id>/camera_info`|sensor_msgs/CameraInfo|<id>|-|
+|LiDAR|`sensor.lidar.ray_cast`|`<namsepace>/<id>/points`|sensor_msgs/PointCloud2|<id>|センサ位置を原点とした相対座標|
+|RADAR|`sensor.other.radar`|-（未対応）|-|-|-|
+|Depthカメラ|`sensor.camera.depth`|-（未対応）|-|-|-|
+|GNSS|`sensor.other.gnss`|`<namsepace>/<id>/fix`|sensor_msgs/NavSatFix|gnss|緯度経度|
+
+※RADAR・Depthカメラ・セマンティックセグメンテーションカメラは`GeneralizedROS2DataAgent`では**現状未対応**です。`_sensors()`メソッドにこれらのセンサを含めると、`setup()`が`NotImplementedError`を送出します（ファイル保存の`GeneralizedDataAgent`では使用可能）。対応する場合の実装候補は、RADARが`sensor_msgs/PointCloud2`（xyz+速度チャンネル）または`radar_msgs/RadarScan`、Depthカメラが`sensor_msgs/Image`（32FC1、depth_image_procの規約）です。
+
+LiDAR点群の出力内容について以下補足します
+
+##### LiDAR点群の出力内容について
+
+- LiDARは1スイープ=1メッセージとする。例えば`rotation_frequency=20`のときは毎tickトピックを出力し、`rotation_frequency=5`のときは4tick分の点群をバッファに蓄積して作成した360度点群を、4tickに1回トピック出力する
+- ringはCARLAに直接ないので垂直角から算出して付与
+
+#### センサデータ以外のTopic
+
+センサデータ以外にも、Ground Truth等の情報がTopic出力されます。なお多くのTopicの座標系は、以下のフレームのどちらかが基準（frame_id）となっています。
+
+- `map`: グローバル座標の原点。CALRAの原点と一致するが、右手系に変換済
+- `base_link`: 自車位置の基準となるフレーム。後車軸の真下の地面と接する位置を原点とし、前方がx、左方がy、上方がz（右手系）
+
+具体的には、以下のTopicが出力されます。
+
+|Topic名|Topic型|frame_id|座標系|内容|
+|---|---|---|---|---|
+|`<namespace>/imu/data`|sensor_msgs/Imu|imu|IMUセンサ座標系（x:前方、y:左方、z:上方）|IMUの出力|
+|`<namespace>/vehicle/drive_state`|ackermann_msgs/AckermannDriveStamped|base_link|-|speed（m/s、後退負）+ steering_angle（rad）|
+|`<namespace>/vehicle/pedals`|sensor_msgs/JointState|""|-|ペダルストローク（正規化[0,1]）|
+|`<namespace>/vehicle/reverse`|std_msgs/Bool|-|-|ギア後退|
+|`<namespace>/vehicle/handbrake`|std_msgs/Bool|-|-|パーキングブレーキ|
+|`<namespace>/gt/ego_odom`|nav_msgs/Odometry|map（base_linkがchild）|グローバル座標（ROS右手系）|自車位置（`/tf`をnav_msgs/msg/Odometry型で表したもの）|
+|`<namespace>/gt/objects`|vision_msgs/Detection3DArray|map|グローバル座標（ROS右手系）|全アクターの3D BBox座標（アノテーション情報）|
+|`<namespace>/agent/plan`|nav_msgs/Path|map|グローバル座標（ROS右手系）|PDM-Liteの計画軌跡|
+|`/clock`|rosgraph_msgs/Clock|-|-|シミュレーション時刻|
+|`/tf_static`|tf2_msgs/TFMessage|base_link（各センサがchild）|自車位置を原点とした相対座標|自車基準位置（base_link=後車軸の真下の地面）から各センサ位置までの相対座標|
+|`/tf`|tf2_msgs/TFMessage|map（base_linkがchild）|グローバル座標（ROS右手系）|自車基準位置（base_link）のグローバル座標|
+
+#### `<namespace>/vehicle/status`の出力内容について
+
+`<namespace>/vehicle/status`は以下のように速度・操舵・アクセル・ブレーキ情報を格納しています。
+
+```
+header:
+  stamp:
+    sec: 19
+    nanosec: 283
+  frame_id: ''
+name:
+- speed
+- steer
+- throttle
+- brake
+position:
+- 9.385041239810902e-05
+- -0.2701198160648346
+- 0.0
+- 1.0
+velocity: []
+effort: []
+```

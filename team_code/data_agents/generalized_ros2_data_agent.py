@@ -10,8 +10,11 @@ Camera topics follow the image_transport naming convention (CompressedImage
 under <base>/compressed), so RViz's Image display subscribes with base topic
 {ns}/{id}/image_raw and transport "compressed".
 Fixed topics: /clock, /tf_static, /tf (ground-truth map->base_link),
-{ns}/imu/data, {ns}/vehicle/status, {ns}/gt/ego_odom, {ns}/gt/objects,
-{ns}/agent/plan.
+{ns}/imu/data, {ns}/gt/ego_odom, {ns}/gt/objects, {ns}/agent/plan, and the
+vehicle state split: {ns}/vehicle/drive_state (AckermannDriveStamped: signed
+speed [m/s] + steering angle [rad, right-handed]), {ns}/vehicle/pedals
+(JointState: throttle/brake strokes [0, 1]), {ns}/vehicle/reverse and
+{ns}/vehicle/handbrake (std_msgs/Bool).
 
 Conventions:
   - All stamps are simulation time (the run_step timestamp); subscribers should
@@ -127,8 +130,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                                 history=HistoryPolicy.KEEP_LAST, depth=1,
                                 durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
+        from ackermann_msgs.msg import AckermannDriveStamped
         from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import CameraInfo, CompressedImage, Imu, JointState, NavSatFix, PointCloud2
+        from std_msgs.msg import Bool
         from nav_msgs.msg import Odometry, Path
         from tf2_msgs.msg import TFMessage
         from vision_msgs.msg import Detection3DArray
@@ -164,7 +169,13 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
             for gnss in self.gnss_sensors
         }
         self._pub_imu = node.create_publisher(Imu, f'{ns}/imu/data', sensor_qos)
-        self._pub_vehicle_status = node.create_publisher(JointState, f'{ns}/vehicle/status', sensor_qos)
+        self._pub_drive_state = node.create_publisher(AckermannDriveStamped, f'{ns}/vehicle/drive_state', sensor_qos)
+        self._pub_pedals = node.create_publisher(JointState, f'{ns}/vehicle/pedals', sensor_qos)
+        self._pub_reverse = node.create_publisher(Bool, f'{ns}/vehicle/reverse', sensor_qos)
+        self._pub_handbrake = node.create_publisher(Bool, f'{ns}/vehicle/handbrake', sensor_qos)
+        # Max front-wheel steering angle [rad], fetched lazily from the vehicle
+        # physics to convert the normalized [-1, 1] control.steer command.
+        self._max_steer_rad = None
         self._pub_ego_odom = node.create_publisher(Odometry, f'{ns}/gt/ego_odom', sensor_qos)
         self._pub_objects = node.create_publisher(Detection3DArray, f'{ns}/gt/objects', sensor_qos)
         self._pub_plan = node.create_publisher(Path, f'{ns}/agent/plan', sensor_qos)
@@ -265,8 +276,7 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
 
         self._pub_imu.publish(conv.imu_msg(input_data['imu'][1], stamp, 'imu'))
 
-        self._pub_vehicle_status.publish(conv.vehicle_status_msg(
-            input_data['speed'][1]['speed'], control.steer, control.throttle, control.brake, stamp))
+        self._publish_vehicle_topics(input_data, control, stamp)
 
         self._publish_ego_odom(ego_transform, stamp)
 
@@ -280,6 +290,22 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
             route = np.asarray(self.remaining_route)[:self.PLAN_MAX_POINTS]
             right_handed = np.stack([route[:, 0], -route[:, 1], route[:, 2]], axis=1)
             self._pub_plan.publish(conv.path_msg(right_handed, stamp))
+
+    def _publish_vehicle_topics(self, input_data, control, stamp):
+        # Speedometer forward speed is the velocity projected on the vehicle
+        # orientation, so it is already negative when reversing.
+        speed = input_data['speed'][1]['speed']
+        if self._max_steer_rad is None:
+            wheels = self._vehicle.get_physics_control().wheels
+            self._max_steer_rad = float(np.deg2rad(max(wheel.max_steer_angle for wheel in wheels)))
+        # CARLA steer is normalized [-1, 1], positive = right (left-handed);
+        # Ackermann steering_angle is rad, positive = left turn (right-handed).
+        steering_angle = -control.steer * self._max_steer_rad
+
+        self._pub_drive_state.publish(conv.ackermann_drive_msg(speed, steering_angle, stamp))
+        self._pub_pedals.publish(conv.pedals_msg(control.throttle, control.brake, stamp))
+        self._pub_reverse.publish(conv.bool_msg(control.reverse))
+        self._pub_handbrake.publish(conv.bool_msg(control.hand_brake))
 
     def _publish_ego_odom(self, ego_transform, stamp):
         location = ego_transform.location

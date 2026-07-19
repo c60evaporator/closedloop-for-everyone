@@ -142,7 +142,7 @@ source ~/.bashrc
 以下コマンドで今回のTopicのrviz表示に必要な拡張プラグインをインストールし、`Detection3DArray`を表示できるようにします
 
 ```bash
-sudo apt install ros-humble-image-transport-plugins ros-humble-vision-msgs-rviz-plugins
+sudo apt install ros-humble-image-transport-plugins ros-humble-vision-msgs-rviz-plugins ros-humble-ackermann-msgs
 ```
 
 以下でRvizが起動するか確認します
@@ -199,3 +199,5 @@ bash tools/launch_carla_servers.sh
 ```
 
 と起動
+
+

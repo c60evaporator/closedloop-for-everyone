@@ -14,8 +14,9 @@ file-based agents keep working in environments without ROS.
 import cv2
 import numpy as np
 
+from ackermann_msgs.msg import AckermannDriveStamped
 from builtin_interfaces.msg import Time
-from std_msgs.msg import Header
+from std_msgs.msg import Bool, Header
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import CameraInfo, CompressedImage, Imu, JointState, NavSatFix, NavSatStatus, PointField
 from sensor_msgs_py import point_cloud2
@@ -126,18 +127,28 @@ def imu_msg(imu7, stamp, frame_id):
     return msg
 
 
-def vehicle_status_msg(speed, steer, throttle, brake, stamp):
-    """TODO(shasou_msgs): replace with shasou_msgs/VehicleStatus.
-
-    Placeholder: sensor_msgs/JointState — the simplest standard message that is
-    stamped (sim time survives bag recording) and self-describing (field names
-    travel inside the message). Layout: name=['speed','steer','throttle','brake'],
-    position=[m/s, [-1,1], [0,1], [0,1]].
-    """
-    msg = JointState(header=_header(stamp, ''))
-    msg.name = ['speed', 'steer', 'throttle', 'brake']
-    msg.position = [float(speed), float(steer), float(throttle), float(brake)]
+def ackermann_drive_msg(speed, steering_angle, stamp, frame_id='base_link'):
+    """Signed forward speed [m/s] (negative when reversing) and steering angle
+    [rad] (right-handed: positive = left turn) -> ackermann_msgs/AckermannDriveStamped.
+    The remaining AckermannDrive fields (steering_angle_velocity, acceleration,
+    jerk) are left at 0 (not observed)."""
+    msg = AckermannDriveStamped(header=_header(stamp, frame_id))
+    msg.drive.speed = float(speed)
+    msg.drive.steering_angle = float(steering_angle)
     return msg
+
+
+def pedals_msg(throttle, brake, stamp):
+    """Normalized [0, 1] pedal strokes -> sensor_msgs/JointState with
+    name=['throttle', 'brake']."""
+    msg = JointState(header=_header(stamp, ''))
+    msg.name = ['throttle', 'brake']
+    msg.position = [float(throttle), float(brake)]
+    return msg
+
+
+def bool_msg(value):
+    return Bool(data=bool(value))
 
 
 def odometry_msg(position_xyz, quat_wxyz, linear_xyz, angular_xyz, stamp,

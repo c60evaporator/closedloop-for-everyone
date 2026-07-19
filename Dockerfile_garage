@@ -188,6 +188,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg \
     && apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-ros-base \
         ros-humble-vision-msgs \
+        ros-humble-ackermann-msgs \
         ros-humble-sensor-msgs-py \
         ros-humble-rosbag2-storage-mcap \
     && rm -rf /var/lib/apt/lists/*
