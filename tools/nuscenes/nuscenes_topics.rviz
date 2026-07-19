@@ -1,0 +1,181 @@
+# RViz2 (Humble) config for the ROS2 data agent topics (ros2_data_agent_nuscenes.py).
+# Fixed frame "map"; the orbit view follows base_link. The Detection3DArray display
+# requires ros-humble-vision-msgs-rviz-plugins. Camera Image displays subscribe to the
+# raw topics republished by rviz_nuscenes.launch.py (only cam_front enabled by default).
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /lidar_top1
+        - /gt_objects1
+      Splitter Ratio: 0.55
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Cell Size: 10
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Marker Scale: 3
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Frame Timeout: 9999
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: lidar_top
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/lidar_top/points
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: Intensity
+      Channel Name: intensity
+      Use rainbow: true
+      Invert Rainbow: false
+      Autocompute Intensity Bounds: true
+      Position Transformer: XYZ
+      Decay Time: 0
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: gt_ego_odom
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/gt/ego_odom
+      Keep: 150
+      Position Tolerance: 0.5
+      Angle Tolerance: 0.1
+      Covariance:
+        Value: false
+      Shape:
+        Value: Arrow
+        Arrow:
+          Shaft Length: 1
+          Shaft Radius: 0.1
+          Head Length: 0.3
+          Head Radius: 0.2
+          Color: 255; 25; 0
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: agent_plan
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/agent/plan
+      Line Style: Billboards
+      Line Width: 0.3
+      Color: 25; 255; 0
+    - Class: vision_msgs_rviz_plugins/Detection3DArray
+      Enabled: true
+      Name: gt_objects
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/gt/objects
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: cam_front
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/cam_front/image_raw
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
+      Enabled: false
+      Name: cam_front_left
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/cam_front_left/image_raw
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
+      Enabled: false
+      Name: cam_front_right
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/cam_front_right/image_raw
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
+      Enabled: false
+      Name: cam_back
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/cam_back/image_raw
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
+      Enabled: false
+      Name: cam_back_left
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/cam_back_left/image_raw
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
+      Enabled: false
+      Name: cam_back_right
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /shasou/cam_back_right/image_raw
+      Normalize Range: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: FollowEgo
+      Target Frame: base_link
+      Distance: 60
+      Pitch: 0.9
+      Yaw: 3.14
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+    Saved: ~
+Window Geometry:
+  Height: 1000
+  Width: 1600

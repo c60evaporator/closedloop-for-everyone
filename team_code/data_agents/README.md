@@ -1,10 +1,17 @@
 # データ収集用ベースクラス
 
-高性能エージェントPDM-Liteで自動運転しつつ**オリジナルのセンサ構成でデータ収集**するための、データ収集エージェント作成用ベースクラス`GeneralizedDataAgent`を作成しました。
+高性能エージェントPDM-Liteで自動運転しつつ**オリジナルのセンサ構成でデータ収集**するために、以下のデータ収集エージェント作成用ベースクラスを準備しています。
+
+- [`GeneralizedDataAgent`]()：収集したセンサデータを**ファイル保存**するエージェントのベースクラス
+- [`GeneralizedROS2DataAgent`]()：収集したセンサデータを**ROS2 Topicで出力**するエージェントのベースクラス
 
 このクラスを継承した自作クラスを作成し、`_sensors`メソッド内にオリジナルのセンサ構成を記述することで、自動運転のプランニングにPDM-Liteを使用したオリジナルのデータ収集エージェントを作成できます。
 
-## 使用方法
+## GeneralizedDataAgent
+
+収集したセンサデータを**ファイル保存**するエージェントのベースクラスです
+
+### 使用方法
 
 `GeneralizedDataAgent`を継承した自作クラスを`team_code/data_agents`フォルダ内に作成し、`COORDINATE_SYSTEM`等の各種クラス定数（[詳細は後]()述）と`_sensors`メソッド内のセンサ構成（[こちらも記載方法は後述]()）を記述します。
 
@@ -94,7 +101,7 @@ TEAM_AGENT=team_code/data_agents/data_agent_nuscenes.py \
 bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 ```
 
-### クラス定数
+#### クラス定数
 
 自作クラス内で以下のクラス定数を定義することで、保存データの種類やフォーマットを変更することができます（重要な定数は太字で記載）。
 
@@ -108,7 +115,7 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |`LAZ_POINT_PRECISION`|float|`LIDAR_FORMAT='laz'`のときに使用するパラメータ|
 |**`COORDINATE_SYSTEM`**|str ("carla" | "nuscenes")|保存するデータの座標系をCARLA形式かnuScenes形式かを選択する|
 
-#### 保存データの座標系
+##### 保存データの座標系
 
 クラス属性`COORDINATE_SYSTEM`の値を変えることで、以下のように出力される座標系を変更することができます。
 
@@ -133,7 +140,7 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |自車位置|`measurements/****.json.gz`の"pos_global"|`ego_pose.json`|
 |アノテーション位置|"matrix"||
 
-### センサ構成の記述方法
+#### センサ構成の記述方法
 
 |センサの種類|`_sensor()`メソッドに記載する`type`|
 |---|---|
@@ -154,7 +161,7 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 
 各センサごとに指定できるパラメータを以下に記載します
 
-#### RGBカメラ (sensor.camera.rgb)
+##### RGBカメラ (sensor.camera.rgb)
 
 以下のキーはすべて必須です（省略すると`agent_wrapper_local.py`がKeyErrorを送出します）。
 
@@ -166,7 +173,7 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 
 この3キーからカメラ内部パラメータ行列が計算され、`sensor_calibration.json`に`intrinsic`として記録されます。それ以外のCARLAカメラ属性（gamma、モーションブラー等）は指定できません。
 
-#### LiDAR (sensor.lidar.ray_cast)
+##### LiDAR (sensor.lidar.ray_cast)
 
 以下のキーはすべて省略可能で、省略時は下表のデフォルト値が使用されます。
 
@@ -191,7 +198,7 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 - 指定したビームパラメータは取付位置とともに`sensor_calibration.json`のlidarエントリに記録されます
 - `rotation_frequency`と`points_per_second`以外のキーの上書きは`tools/leaderboard_local/agent_wrapper_patches.py`のランタイムパッチで実現されており、`tools/collect_dataset_multi.sh`経由の実行では自動適用されます（CARLA Garage純正のevaluatorを直接実行した場合は無視されデフォルト値になるので注意）
 
-#### RADAR (sensor.other.radar)
+##### RADAR (sensor.other.radar)
 
 以下のキーはすべて必須です（省略すると`agent_wrapper_local.py`がKeyErrorを送出します）。
 
@@ -207,20 +214,20 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |points_per_second|1500|秒間検出点数|
 |range|100|最大測定距離 [m]|
 
-#### Depthカメラ (sensor.camera.depth)
+##### Depthカメラ (sensor.camera.depth)
 
 RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wrapperは`sensor.camera.*`を共通処理するため）。深度は8bit正規化値のPNGとして保存されます。
 
-#### GNSS (sensor.other.gnss)
+##### GNSS (sensor.other.gnss)
 
 追加で指定できるキーはありません。共通の必須パラメータは以下に注意してください。
 
 - 取付姿勢（`roll`, `pitch`, `yaw`）はwrapperにより無視され、常にゼロとして扱われます（位置`x`, `y`, `z`のみ有効）
 - 観測ノイズパラメータは`agent_wrapper_local.py`にハードコードされており変更できません（緯度/経度/高度の標準偏差 0.000005、バイアス 0.0）
 
-## 保存データの形式
+### 保存データの形式
 
-### センサデータ
+#### センサデータ
 
 各センサデータは以下の形式で保存されます。
 
@@ -232,7 +239,7 @@ RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wr
 |Depthカメラ|`sensor.camera.depth`|`<id>/<frame>.png` (8bit normalized depth)|
 |GNSS|`sensor.other.gnss`|`<id>/<frame>.json`|
 
-### その他の保存情報
+#### その他の保存情報
 
 `_sensors()`メソッドで指定したセンサデータ以外にも、以下の情報が記録されます
 
@@ -244,7 +251,7 @@ RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wr
 
 バウンディングボックスとメタデータについて詳細を記述します。
 
-#### バウンディングボックス
+##### バウンディングボックス
 
 1フレーム分のバウンディングボックス（アノテーション）情報が`boxes/<frame>.json.gz`に保存されます。
 具体的には以下のフィールドが含まれています（これ以外にもclassに応じたフィールドが入ります）。
@@ -261,7 +268,7 @@ RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wr
 | `id` | `number` | CARLA actor ID |
 | `matrix` | `number[4][4]` | actorのグローバル座標系での4x4 transform matrix |
 
-#### メタデータ
+##### メタデータ
 
 1フレーム分のメタデータが`measurements/<frame>.json.gz`に保存され、自車の状態、ローカル座標系の経路、制御入力、ハザード判定が入っています。
 具体的には以下のフィールドが含まれています。
@@ -302,3 +309,11 @@ RGBカメラと同じく`width`・`height`・`fov`の3キーが必須です（wr
 なお、**このメタデータは**`COORDINATE_SYSTEM="nuscenes"`**であってもCARLA座標系で保存されます**（PDM-Lite自身が走行制御に使う内部表現との整合性を取るため）
 
 よって出力したデータをnuScese形式のjsonに変換したい場合、基本的には`measurements`ではなく`boxes`から情報を取ることが推奨されます（例：`ego_poses.json`は、`measurements`の`ego_matrix`ではなく`boxes`の1レコード目に記録された`ego_car`の`matrix`から変換する）
+
+## GeneralizedROS2DataAgent
+
+収集したセンサデータを**ROS2 Topicで出力**するエージェントのベースクラスです
+
+### 使用方法
+
+

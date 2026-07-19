@@ -4,8 +4,11 @@ sensor data as ROS2 topics instead of writing files.
 
 Subclasses implement `_sensors()` exactly like GeneralizedDataAgent subclasses;
 the sensor `id` doubles as the ROS frame_id and topic segment (id 'cam_front' ->
-{TOPIC_NAMESPACE}/cam_front/image + camera_info; 'lidar_top' ->
+{TOPIC_NAMESPACE}/cam_front/image_raw/compressed + camera_info; 'lidar_top' ->
 {TOPIC_NAMESPACE}/lidar_top/points; 'gnss' -> {TOPIC_NAMESPACE}/gnss/fix).
+Camera topics follow the image_transport naming convention (CompressedImage
+under <base>/compressed), so RViz's Image display subscribes with base topic
+{ns}/{id}/image_raw and transport "compressed".
 Fixed topics: /clock, /tf_static, /tf (ground-truth map->base_link),
 {ns}/imu/data, {ns}/vehicle/status, {ns}/gt/ego_odom, {ns}/gt/objects,
 {ns}/agent/plan.
@@ -132,7 +135,11 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         self._camera_intrinsics = {}
         for camera in self.rgb_sensors:
             cam_id = camera['id']
-            self._pub_image[cam_id] = node.create_publisher(CompressedImage, f'{ns}/{cam_id}/image', sensor_qos)
+            # image_transport naming convention: the CompressedImage lives under
+            # <base>/compressed, so RViz's Image display can subscribe with
+            # base topic {ns}/{id}/image_raw and transport "compressed".
+            self._pub_image[cam_id] = node.create_publisher(
+                CompressedImage, f'{ns}/{cam_id}/image_raw/compressed', sensor_qos)
             self._pub_camera_info[cam_id] = node.create_publisher(CameraInfo, f'{ns}/{cam_id}/camera_info',
                                                                   sensor_qos)
             self._camera_intrinsics[cam_id] = t_u.calculate_intrinsic_matrix(
@@ -256,8 +263,11 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
             self._publish_objects(stamp)
 
         if getattr(self, 'remaining_route', None) is not None and len(self.remaining_route) > 0:
+            # remaining_route is (N, 3) with the road elevation z from the CARLA
+            # waypoints (privileged_route_planner builds [loc.x, loc.y, loc.z]);
+            # keep z so the path lies on the road surface in the map frame.
             route = np.asarray(self.remaining_route)[:self.PLAN_MAX_POINTS]
-            right_handed = np.stack([route[:, 0], -route[:, 1]], axis=1)
+            right_handed = np.stack([route[:, 0], -route[:, 1], route[:, 2]], axis=1)
             self._pub_plan.publish(conv.path_msg(right_handed, stamp))
 
     def _publish_ego_odom(self, ego_transform, stamp):

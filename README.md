@@ -74,11 +74,22 @@ uv run tools/carla_map_to_nuscenes.py --map-name <マップ名>
 
 ### データ収集
 
-まず以下コマンドで
+データ収集は、以下の2通りの方法があります。
+
+1. ファイル保存：取得したセンサデータやアノテーション情報をファイルとして保存する（気軽にモデル学習を行いたいケースでおすめ）
+2. ROS2 Topic出力：取得したセンサデータやアノテーション情報をROS2 Topicとして出力し、別途準備した受信システムで保存する（実写でROS2を使用している場合にエコシステムを統一したいケースで有効。[shasou-recorder]()との併用がおすすめ）
+
+#### 1. ファイル保存する場合
+
+##### CARLAの起動
+
+まず以下コマンドでCALRAを起動します（マルチGPU実行したい場合、適宜`.env`の`EVAL_GPUS`を指定してください）
 
 ```bash
 bash tools/launch_carla_servers.sh
 ```
+
+##### データ収集開始
 
 **別ターミナル**で以下コマンドでDockerコンテナに入り
 
@@ -110,14 +121,14 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data pdmlite_nuscenes -
 |---|---|
 |pdmlite|CARLA Garage公式のPDM-Liteデータ収集エージェント|
 |pdmlite_nuscenes|nuScenesのセンサ構成・座標系でデータ出力するPDM-Liteデータ収集エージェント|
-|pdmlite_nuscenes_ros2|nuScenesのセンサ構成・座標系でros2 Topicを出力するPDM-Liteデータ収集エージェント（**シングルGPU**での実行のみ対応）|
 
-
-#### ROS2によるデータ収集
+#### 2. ROS2 Topic出力する場合
 
 [shasou-recorder]()ライブラリを使ってROS2でデータ収集する方法を解説します。
 
 ##### ROS2とRviz2のインストール
+
+まず必要パッケージをインストールします。
 
 [こちら](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)を参考に、ROS2 Humble（`Humble`の部分はUbuntuのバージョンに合わせて適宜変えてください）のDesktop Installを実施します。
 
@@ -128,15 +139,63 @@ echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-以下コマンドでRvizで`Detection3DArray`を表示できるようにします
+以下コマンドで今回のTopicのrviz表示に必要な拡張プラグインをインストールし、`Detection3DArray`を表示できるようにします
 
 ```bash
-sudo apt install ros-humble-vision-msgs-rviz-plugins
+sudo apt install ros-humble-image-transport-plugins ros-humble-vision-msgs-rviz-plugins
 ```
 
-##### CARLAの起動
+以下でRvizが起動するか確認します
+
+```bash
+ros2 run rviz rviz
+```
+
+##### データ収集エージェントのrvizによる動作確認
+
+以下でCARLAを起動し、CARLAのGUIが表示されることを確認します。
+
+```bash
+cd <CARLAのルートフォルダ>
+bash ./CarlaUE4.sh
+```
+
+**別ターミナル**で以下コマンドを実行し、表示に必要な設定を適用したrvizを起動します（この時点では何もセンサデータが表示されていない状態でOKです）
 
 ```
-cd <CARLAのインストールフォルダ>
-
+ros2 launch tools/nuscenes/rviz_nuscenes.launch.py
 ```
+
+さらに**別ターミナル**で以下コマンドでDockerコンテナに入り
+
+```bash
+docker exec -it carlagarage_dev bash
+```
+
+以下コマンドでデータ収集を実行します
+
+```bash
+bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data pdmlite_nuscenes_ros2
+```
+
+rviz2画面に各種センサデータが表示され、CARLAのGUIと表示されるデータの位置関係が合っていればOKです。具体的には以下項目をチェックすると良いでしょう
+
+|rviz2のDisplaysでの項目|Topic型|Topic名|確認ポイント|
+|---|---|---|---|
+|TF|TF|`/tf_static` + `/tf` (自動)|`base_link`が地面に接しているか。`cam_front`(前方+x, 高さ1.51m)、`lidar_top`(高さ1.84m)等が正しい相対位置にあるか。gt_objectsの表示をオフにすると見やすい|
+|lidar_top|PointCloud2|`/shasou/lidar_top/points`|地面の点がz≈0(map系)に来るか、建物・車両の点がgt_objectsのboxと重なるか|
+|gt_ego_odom|Odometry|`/shasou/gt/ego_odom`|赤い矢印が自車位置で進行方向を向くか。Covariance表示はオフ推奨|
+|agent_plan|Path|`/shasou/agent/plan`|自車前方に経路（緑色の線）が伸びるか|
+|gt_objects|Detection3DArray|`/shasou/gt/objects`|周囲車両のboxが点群の車両クラスタと一致するか|
+
+##### shasou-recorderのインストール
+
+##### shasou-recorderと組み合わせたデータ収集
+
+まず以下コマンドでCALRAを起動します。マルチGPU実行できない（トピックが混信する）ので、`.env`の`EVAL_GPUS`を1個のみ指定してください
+
+```bash
+bash tools/launch_carla_servers.sh
+```
+
+と起動
