@@ -174,6 +174,46 @@ RUN /opt/conda/bin/conda run -n garage_2 \
 ####                        END OF AGENT SPECIFIC COMMANDS                              ####
 ############################################################################################
 
+# ── ROS 2 Humble (for the ROS2 topic-publishing data agents) ──────────────────
+# ros-base: rclpy, standard interfaces (sensor_msgs/nav_msgs/tf2_msgs/...),
+# rosbag2, Fast DDS. vision-msgs: Detection3DArray. sensor-msgs-py: PointCloud2
+# helpers (pure Python). rosbag2-storage-mcap: mcap bag output.
+# If apt signature errors appear here, the ROS apt key has rotated — switch to
+# the ros2-apt-source .deb method from docs.ros.org.
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+         -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+         > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-ros-base \
+        ros-humble-vision-msgs \
+        ros-humble-sensor-msgs-py \
+        ros-humble-rosbag2-storage-mcap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bridge /opt/ros/humble into the conda garage_2 interpreter WITHOUT sourcing
+# setup.bash: explicit ENV also reaches non-login shells and launch scripts.
+# - Only ROS paths go on PYTHONPATH — never /usr/lib/python3/dist-packages,
+#   which would shadow conda's numpy==1.23.5 with Ubuntu's 1.21 (ABI break).
+# - rclpy's compiled extensions are cp310; conda garage_2 is Python 3.10 too,
+#   so the ABI matches. If a "GLIBCXX_x.y.z not found" error ever appears,
+#   reorder libstdc++ resolution (conda's copy is newer, normally fine).
+# - The ros2 CLI (/opt/ros/humble/bin/ros2) runs under system python3 and is
+#   self-contained, so `ros2 topic hz` / `ros2 bag record` work as-is.
+# - Fast DDS (default RMW) works with the compose file's network_mode: host;
+#   fallback if needed: install ros-humble-rmw-cyclonedds-cpp and set
+#   RMW_IMPLEMENTATION=rmw_cyclonedds_cpp.
+ENV ROS_DISTRO=humble \
+    ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    ROS_DOMAIN_ID=0 \
+    AMENT_PREFIX_PATH=/opt/ros/humble \
+    LD_LIBRARY_PATH=/opt/ros/humble/lib:/opt/ros/humble/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH} \
+    PYTHONPATH=/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:${PYTHONPATH} \
+    PATH=/opt/ros/humble/bin:${PATH}
+# ── End of ROS 2 Humble installation ──────────────────
+
 # non-root user作成
 ARG USERNAME=developer
 ARG UID=1000

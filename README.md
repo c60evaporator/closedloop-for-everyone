@@ -71,3 +71,72 @@ uv run tools/carla_map_to_nuscenes.py --map-name <マップ名>
 
 `notebooks/viz_map_expansion.ipynb`で抽出したアノテーションファイルを可視化可能。
 また`notebooks/viz_nusc_map_converter.ipynb`や`notebooks/viz_nusc_map_extractor.ipynb`でCARLAから動的にアノテーションを抽出（carla_map_to_nuscenes.pyと同じメソッドを使用）して可視化することもできる。
+
+### データ収集
+
+まず以下コマンドで
+
+```bash
+bash tools/launch_carla_servers.sh
+```
+
+**別ターミナル**で以下コマンドでDockerコンテナに入り
+
+```bash
+docker exec -it carlagarage_dev bash
+```
+
+以下コマンドでデータ収集を実行できます
+
+```bash
+bash tools/collect_dataset_multi.sh <ルート定義ファイル格納フォルダ> <エージェント名>
+```
+
+例えばCARLA Garage公式の`carla_garage/data`フォルダを指定してPDM-Liteでnuscenes形式のデータ収集する場合、以下を実行します
+
+```bash
+bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data pdmlite_nuscenes
+```
+
+評価を途中から再開したい場合以下のように--resumeオプションを付けます
+
+```bash
+bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data pdmlite_nuscenes --resume
+```
+
+使用できるエージェント名は以下となります
+
+|エージェント名|内容|
+|---|---|
+|pdmlite|CARLA Garage公式のPDM-Liteデータ収集エージェント|
+|pdmlite_nuscenes|nuScenesのセンサ構成・座標系でデータ出力するPDM-Liteデータ収集エージェント|
+|pdmlite_nuscenes_ros2|nuScenesのセンサ構成・座標系でros2 Topicを出力するPDM-Liteデータ収集エージェント（**シングルGPU**での実行のみ対応）|
+
+
+#### ROS2によるデータ収集
+
+[shasou-recorder]()ライブラリを使ってROS2でデータ収集する方法を解説します。
+
+##### ROS2とRviz2のインストール
+
+[こちら](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)を参考に、ROS2 Humble（`Humble`の部分はUbuntuのバージョンに合わせて適宜変えてください）のDesktop Installを実施します。
+
+インストールが終わったら、以下コマンドでros2コマンドをスタートアップで有効にすると良いでしょう（`humble`の部分は適宜変えてください）
+
+```bash
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+以下コマンドでRvizで`Detection3DArray`を表示できるようにします
+
+```bash
+sudo apt install ros-humble-vision-msgs-rviz-plugins
+```
+
+##### CARLAの起動
+
+```
+cd <CARLAのインストールフォルダ>
+
+```

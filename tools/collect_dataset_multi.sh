@@ -39,6 +39,10 @@ elif [ "$AGENT_NAME" = "pdmlite_nuscenes" ]; then
     TEAM_AGENT=${TEAM_AGENT:-${CARLA_GARAGE_ROOT}/team_code/data_agents/data_agent_nuscenes.py}  # PDM-Lite data collection agent with nuScenes camera rig
     CHALLENGE_TRACK_CODENAME=MAP_QUALIFIER
     OUTPUT_FORMAT_NAME="garage_nuscenes"
+elif [ "$AGENT_NAME" = "pdmlite_nuscenes_ros2" ]; then
+    TEAM_AGENT=${TEAM_AGENT:-${CARLA_GARAGE_ROOT}/team_code/data_agents/ros2_data_agent_nuscenes.py}  # PDM-Lite ROS2 data collection agent with nuScenes camera rig
+    CHALLENGE_TRACK_CODENAME=MAP_QUALIFIER
+    OUTPUT_FORMAT_NAME="garage_nuscenes_ros2"
 elif [ -z "$AGENT_NAME" ]; then
     TEAM_AGENT=${TEAM_AGENT:?Please set TEAM_AGENT environment variable when AGENT_NAME is omitted.}
     CHALLENGE_TRACK_CODENAME=MAP_QUALIFIER
