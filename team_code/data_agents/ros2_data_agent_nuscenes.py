@@ -27,9 +27,11 @@ def get_entry_point():
 class ROS2DataAgentNuScenes(GeneralizedROS2DataAgent):
     """
     Child of GeneralizedROS2DataAgent with a nuScenes-style 6 camera + LiDAR + GNSS rig.
+    (COORDINATE_SYSTEM = 'nuscenes' is the base-class default.)
     """
 
-    COORDINATE_SYSTEM = 'nuscenes'
+    # Required: namespace of every published topic except /clock, /tf, /tf_static.
+    TOPIC_NAMESPACE = '/shasou'
 
     def _sensors(self):
         return [{

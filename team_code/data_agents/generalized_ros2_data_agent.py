@@ -75,9 +75,15 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
     # BEV ground truth is not published and would drag in the pre-generated
     # map raster dependency; keep it off.
     SAVE_BEV_SEMANTICS = False
+    # ROS uses the same right-handed convention as nuScenes, so this base class
+    # defaults to 'nuscenes' (GeneralizedDataAgent defaults to 'carla');
+    # setup() rejects any other value.
+    COORDINATE_SYSTEM = 'nuscenes'
 
-    # Namespace prepended to every topic except /clock and /tf_static.
-    TOPIC_NAMESPACE = '/shasou'
+    # Namespace prepended to every topic except /clock, /tf and /tf_static.
+    # No default: every subclass must define it (e.g. TOPIC_NAMESPACE = '/nuscenes');
+    # setup() raises otherwise.
+    TOPIC_NAMESPACE = None
     # JPEG quality for the CompressedImage camera topics.
     JPEG_QUALITY = 90
     # Publish cameras every N ticks (jpeg encoding of 6x1600x900 is the
@@ -100,14 +106,19 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         if self.COORDINATE_SYSTEM != 'nuscenes':
             raise ValueError('GeneralizedROS2DataAgent requires COORDINATE_SYSTEM = "nuscenes" '
                              '(ROS uses the same right-handed convention).')
+        if not self.TOPIC_NAMESPACE:
+            raise ValueError('Subclasses of GeneralizedROS2DataAgent must define the TOPIC_NAMESPACE '
+                             "class constant (e.g. TOPIC_NAMESPACE = '/nuscenes').")
         if self.semseg_sensors or self.depth_sensors or self.radar_sensors:
             raise NotImplementedError('semantic segmentation / depth / radar topics are not supported yet.')
 
         _ensure_rclpy_init()
         # Unique node name: several routes (and retries) run in one process, and
-        # parallel GPU processes may share a DDS domain.
+        # parallel GPU processes may share a DDS domain. Prefixed with the
+        # (sanitized) TOPIC_NAMESPACE so the node is attributable to its topics.
+        namespace_prefix = re.sub(r'\W', '_', self.TOPIC_NAMESPACE.strip('/'))
         route_suffix = re.sub(r'\W', '_', str(self.route_index if self.route_index is not None else 0))
-        node_name = f'shasou_data_agent_{os.getpid()}_{route_suffix}'
+        node_name = f'{namespace_prefix}_data_agent_{os.getpid()}_{route_suffix}'
         self._ros_node = rclpy.create_node(node_name)
 
         sensor_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
