@@ -472,18 +472,29 @@ bash tools/collect_dataset_multi.sh ${CARLA_GARAGE_ROOT}/data
 |RGBカメラ（画像本体）|`sensor.camera.rgb`|`<namsepace>/<id>/image_raw/compressed`|sensor_msgs/CompressedImage|<id>|-|
 |RGBカメラ（内部パラメータ）|`sensor.camera.rgb`|`<namsepace>/<id>/camera_info`|sensor_msgs/CameraInfo|<id>|-|
 |LiDAR|`sensor.lidar.ray_cast`|`<namsepace>/<id>/points`|sensor_msgs/PointCloud2|<id>|センサ位置を原点とした相対座標|
-|RADAR|`sensor.other.radar`|-（未対応）|-|-|-|
+|RADAR|`sensor.other.radar`|`<namsepace>/<id>/points`|sensor_msgs/PointCloud2|<id>|センサ位置を原点とした右手系（X前方・Y左・Z上）|
 |Depthカメラ|`sensor.camera.depth`|-（未対応）|-|-|-|
 |GNSS|`sensor.other.gnss`|`<namsepace>/<id>/fix`|sensor_msgs/NavSatFix|gnss|緯度経度|
 
-※RADAR・Depthカメラ・セマンティックセグメンテーションカメラは`GeneralizedROS2DataAgent`では**現状未対応**です。`_sensors()`メソッドにこれらのセンサを含めると、`setup()`が`NotImplementedError`を送出します（ファイル保存の`GeneralizedDataAgent`では使用可能）。対応する場合の実装候補は、RADARが`sensor_msgs/PointCloud2`（xyz+速度チャンネル）または`radar_msgs/RadarScan`、Depthカメラが`sensor_msgs/Image`（32FC1、depth_image_procの規約）です。
+※Depthカメラおよびセマンティックセグメンテーションカメラは`GeneralizedROS2DataAgent`では**現状未対応**です。`_sensors()`メソッドにこれらのセンサを含めると、`setup()`が`NotImplementedError`を送出します（ファイル保存の`GeneralizedDataAgent`では使用可能）。対応する場合の実装候補は、Depthカメラが`sensor_msgs/Image`（32FC1、depth_image_procの規約）です。
 
-LiDAR点群の出力内容について以下補足します
+LiDAR点群とRADAR点群のフィールドと補足を以下に記載します。
 
-##### LiDAR点群の出力内容について
+##### LiDAR点群のフィールドと補足
 
+- フィールドは`x, y, z`（float32、右手系センサ座標）、`intensity`（float32）、`ring`（uint16）。オフセットはx=0, y=4, z=8, intensity=12, ring=16でpoint_stepは18バイト
 - LiDARは1スイープ=1メッセージとする。例えば`rotation_frequency=20`のときは毎tickトピックを出力し、`rotation_frequency=5`のときは4tick分の点群をバッファに蓄積して作成した360度点群を、4tickに1回トピック出力する
-- ringはCARLAに直接ないので垂直角から算出して付与
+- 複数tickを合成する場合、各tickの点群は自車の移動量（エゴモーション）を打ち消してメッセージ出力時刻の自車位置基準に揃えてから結合する。ただしtick間に移動した他車等の動物体は歪む（実機のLiDARで生じる歪みと同種のもの）
+- `intensity`はCARLAが提供する反射強度で、`atmosphere_attenuation_rate`等の減衰パラメータを反映した0〜1の値。実機LiDARの生の反射強度値（0〜255等）とはスケールが異なる点に注意
+- `ring`（レーザーIDに相当）はCARLAが直接提供しないため、各点の垂直角を`channels`・`upper_fov`・`lower_fov`から定まるビーム角に最も近いものへ割り当てて算出する（下から0始まり）。垂直角が完全に等間隔でないLiDAR型番を模擬する場合は誤差が生じうる
+- `rotation_frequency`は`carla_fps`（20）の約数である必要がある（20/10/5/4/2/1）。約数でない値を指定するとメッセージあたりのスイープが1回転にならず、`setup()`が`ValueError`を送出する
+
+##### RADAR点群のフィールドと補足
+
+- フィールドは`x, y, z`（float32、右手系センサ座標）と`velocity_radial`（float32、動径方向速度[m/s]）
+- `velocity_radial`は**接近が負**（CARLAのネイティブ符号をそのまま使用）。ただしこれは**センサとの相対速度で自車運動を含む**ため、自車が動くと静止物も非ゼロの動径速度を持つ。真に動いている物体を判別したい場合は、受信側で「自車速度を各点の視線方向に射影した成分」を差し引いて補償する（nuScenesの`vx_comp`相当）
+- CARLAレーダーは`points_per_second=1500`・`range=100`がハードコードで変更不可（`horizontal_fov`/`vertical_fov`はspecで指定可能）。またRCS（レーダー反射断面積）はCARLAが提供しないため強度フィールドは持たない
+- 複数レーダー（front＋四隅等）は`_sensors()`に複数記述すれば各`id`のトピック／フレームに個別出力される
 
 #### センサデータ以外のTopic
 
@@ -507,3 +518,5 @@ LiDAR点群の出力内容について以下補足します
 |`/clock`|rosgraph_msgs/Clock|-|-|シミュレーション時刻|
 |`/tf_static`|tf2_msgs/TFMessage|base_link（各センサがchild）|自車位置を原点とした相対座標|自車基準位置（base_link=後車軸の真下の地面）から各センサ位置までの相対座標|
 |`/tf`|tf2_msgs/TFMessage|map（base_linkがchild）|グローバル座標（ROS右手系）|自車基準位置（base_link）のグローバル座標|
+
+

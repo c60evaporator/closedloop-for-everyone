@@ -99,6 +99,31 @@ def pointcloud2_msg(points_xyzir, stamp, frame_id):
     return point_cloud2.create_cloud(_header(stamp, frame_id), _POINTCLOUD_FIELDS, structured)
 
 
+_RADAR_FIELDS = [
+    PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+    PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+    PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+    PointField(name='velocity_radial', offset=12, datatype=PointField.FLOAT32, count=1),
+]
+
+
+def radar_pointcloud2_msg(points_xyzv, stamp, frame_id):
+    """(N, 4) array [x, y, z, velocity_radial] -> sensor_msgs/PointCloud2 with an
+    x,y,z,velocity_radial(float32) layout. velocity_radial is the CARLA-native radial
+    (Doppler) velocity: negative = approaching the sensor (it is relative, i.e. it
+    includes the ego vehicle's own motion). Handles N == 0 (an empty cloud)."""
+    points = np.asarray(points_xyzv)
+    structured = np.empty(points.shape[0],
+                          dtype=[('x', np.float32), ('y', np.float32), ('z', np.float32),
+                                 ('velocity_radial', np.float32)])
+    if points.shape[0]:
+        structured['x'] = points[:, 0]
+        structured['y'] = points[:, 1]
+        structured['z'] = points[:, 2]
+        structured['velocity_radial'] = points[:, 3]
+    return point_cloud2.create_cloud(_header(stamp, frame_id), _RADAR_FIELDS, structured)
+
+
 def navsatfix_msg(lat_lon_alt, stamp, frame_id):
     msg = NavSatFix(header=_header(stamp, frame_id))
     msg.status.status = NavSatStatus.STATUS_FIX

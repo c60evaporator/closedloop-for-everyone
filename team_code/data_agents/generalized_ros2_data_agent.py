@@ -5,7 +5,8 @@ sensor data as ROS2 topics instead of writing files.
 Subclasses implement `_sensors()` exactly like GeneralizedDataAgent subclasses;
 the sensor `id` doubles as the ROS frame_id and topic segment (id 'cam_front' ->
 {TOPIC_NAMESPACE}/cam_front/image_raw/compressed + camera_info; 'lidar_top' ->
-{TOPIC_NAMESPACE}/lidar_top/points; 'gnss' -> {TOPIC_NAMESPACE}/gnss/fix).
+{TOPIC_NAMESPACE}/lidar_top/points; radar id -> {TOPIC_NAMESPACE}/<id>/points
+(PointCloud2 x,y,z + velocity_radial float32); 'gnss' -> {TOPIC_NAMESPACE}/gnss/fix).
 Camera topics follow the image_transport naming convention (CompressedImage
 under <base>/compressed), so RViz's Image display subscribes with base topic
 {ns}/{id}/image_raw and transport "compressed".
@@ -33,6 +34,11 @@ Conventions:
     newest tick's frame (no partial sweeps are ever published; the first
     message appears at tick N-1). This differs from GeneralizedDataAgent.tick,
     which merges a rolling window every tick.
+  - RADAR: one PointCloud2 per tick in the radar's own right-handed sensor frame
+    (frame_id = spec id, X forward / Y left / Z up). velocity_radial is CARLA's
+    relative radial velocity (negative = approaching; it includes the ego motion,
+    so static objects read non-zero while the ego moves). CARLA's radar
+    points_per_second (1500) and range (100 m) are hardcoded in the wrapper.
   - The agent publishes only: SAVE_PATH is dropped from the environment in
     setup(), so the whole file-writing chain (measurements/, sensor folders,
     sensor_calibration.json) is disabled. DATAGEN=1 must stay exported and the
@@ -114,8 +120,8 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         if not self.TOPIC_NAMESPACE:
             raise ValueError('Subclasses of GeneralizedROS2DataAgent must define the TOPIC_NAMESPACE '
                              "class constant (e.g. TOPIC_NAMESPACE = '/nuscenes').")
-        if self.semseg_sensors or self.depth_sensors or self.radar_sensors:
-            raise NotImplementedError('semantic segmentation / depth / radar topics are not supported yet.')
+        if self.semseg_sensors or self.depth_sensors:
+            raise NotImplementedError('semantic segmentation / depth topics are not supported yet.')
 
         _ensure_rclpy_init()
         # Unique node name: several routes (and retries) run in one process, and
@@ -165,6 +171,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         self._pub_points = {
             lidar['id']: node.create_publisher(PointCloud2, f"{ns}/{lidar['id']}/points", sensor_qos)
             for lidar in self.lidar_sensors
+        }
+        self._pub_radar = {
+            radar['id']: node.create_publisher(PointCloud2, f"{ns}/{radar['id']}/points", sensor_qos)
+            for radar in self.radar_sensors
         }
         self._pub_fix = {
             gnss['id']: node.create_publisher(NavSatFix, f"{ns}/{gnss['id']}/fix", sensor_qos)
@@ -219,6 +229,30 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         elevation_deg = np.rad2deg(np.arcsin(np.clip(points_xyz[:, 2] / np.maximum(distance, 1e-9), -1.0, 1.0)))
         ring = np.round((elevation_deg - lower_fov) / (upper_fov - lower_fov) * (channels - 1))
         return np.clip(ring, 0, channels - 1)
+
+    # ── RADAR helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _radar_to_sensor_frame(points):
+        """CARLA radar detections -> (N, 4) [x, y, z, velocity_radial] in the
+        right-handed sensor frame (X forward, Y left, Z up).
+
+        Input is (N, 4) [depth (m), azimuth (rad), altitude (rad), velocity (m/s)]
+        as delivered by the leaderboard sensor_interface. The spherical detection
+        is placed in CARLA's left-handed sensor frame (x fwd, y right, z up) and the
+        y axis is flipped for the right-handed output. velocity_radial is the radial
+        (Doppler) scalar, invariant to the frame handedness; CARLA's sign is kept
+        (negative = approaching the sensor), and it is relative (includes ego motion).
+        """
+        points = np.asarray(points)
+        if points.shape[0] == 0:
+            return np.empty((0, 4), dtype=np.float32)
+        depth, azimuth, altitude, velocity = points[:, 0], points[:, 1], points[:, 2], points[:, 3]
+        cos_altitude = np.cos(altitude)
+        x = depth * cos_altitude * np.cos(azimuth)
+        y = -depth * cos_altitude * np.sin(azimuth)
+        z = depth * np.sin(altitude)
+        return np.stack([x, y, z, velocity], axis=1)
 
     # ── Agent loop ───────────────────────────────────────────────────────────
 
@@ -277,6 +311,12 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                 sweep = self._lidar_to_nuscenes_sensor_frame(merged, lidar)
                 self._pub_points[lidar_id].publish(conv.pointcloud2_msg(sweep, stamp, lidar_id))
                 window.clear()
+
+        for radar in self.radar_sensors:
+            # Radar delivers a complete measurement each tick (not a rotating
+            # sweep), so publish every tick with no windowing.
+            radar_points = self._radar_to_sensor_frame(input_data[radar['id']][1])
+            self._pub_radar[radar['id']].publish(conv.radar_pointcloud2_msg(radar_points, stamp, radar['id']))
 
         for gnss in self.gnss_sensors:
             self._pub_fix[gnss['id']].publish(
