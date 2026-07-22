@@ -11,7 +11,8 @@ Camera topics follow the image_transport naming convention (CompressedImage
 under <base>/compressed), so RViz's Image display subscribes with base topic
 {ns}/{id}/image_raw and transport "compressed".
 Fixed topics: /clock, /tf_static, /tf (ground-truth map->base_link),
-{ns}/imu/data, {ns}/gt/ego_odom, {ns}/gt/objects, {ns}/agent/plan, and the
+{ns}/imu/data, {ns}/gt/ego_odom, {ns}/gt/objects, {ns}/gt/object_attributes,
+{ns}/agent/plan, and the
 vehicle state split: {ns}/vehicle/drive_state (AckermannDriveStamped: signed
 speed [m/s] + steering angle [rad, right-handed]), {ns}/vehicle/pedals
 (JointState: throttle/brake strokes [0, 1]), {ns}/vehicle/reverse and
@@ -41,14 +42,16 @@ Conventions:
     points_per_second (1500) and range (100 m) are hardcoded in the wrapper.
   - gt/objects: Detection3D.id is the instance id "<route_index>_<carla_actor_id>",
     stable for an actor's whole lifetime and unique within the route, so it maps
-    onto a nuScenes instance_token. Beyond results[0] (the real class), the
-    hypotheses are metadata slots keyed by class_id: 'speed_mps',
-    'num_lidar_pts' (LiDAR hits inside the box, counted on the newest complete
-    sweep of the first LiDAR) and 'visibility' (1..4, the nuScenes
-    visibility_token binning of num_lidar_pts). Note this is a LiDAR-observability
-    proxy, not the camera-pixel visibility nuScenes annotates; the last two are
-    omitted entirely when no sweep is available (no LiDAR in the rig, or before
-    the first window completes).
+    onto a nuScenes instance_token. `results` holds only the real class
+    hypothesis (the CARLA blueprint type_id).
+  - gt/object_attributes: the attributes vision_msgs has no field for, as one
+    JSON document per tick in a std_msgs/String (see
+    ros2_msg_converters.object_attributes_msg). Published from the same
+    detections and with the same stamp as gt/objects, which is how subscribers
+    pair the two before joining on instance_id. speed_mps is the forward speed
+    [m/s]; num_lidar_pts is the LiDAR hits inside the box, counted on the newest
+    complete sweep of the first LiDAR and omitted when no sweep is available (no
+    LiDAR in the rig, or before the first window completes).
   - The agent publishes only: SAVE_PATH is dropped from the environment in
     setup(), so the whole file-writing chain (measurements/, sensor folders,
     sensor_calibration.json) is disabled. DATAGEN=1 must stay exported and the
@@ -156,7 +159,7 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         from ackermann_msgs.msg import AckermannDriveStamped
         from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import CameraInfo, CompressedImage, Imu, JointState, NavSatFix, PointCloud2
-        from std_msgs.msg import Bool
+        from std_msgs.msg import Bool, String
         from nav_msgs.msg import Odometry, Path
         from tf2_msgs.msg import TFMessage
         from vision_msgs.msg import Detection3DArray
@@ -205,6 +208,8 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         self._max_steer_rad = None
         self._pub_ego_odom = node.create_publisher(Odometry, f'{ns}/gt/ego_odom', sensor_qos)
         self._pub_objects = node.create_publisher(Detection3DArray, f'{ns}/gt/objects', sensor_qos)
+        self._pub_object_attributes = node.create_publisher(String, f'{ns}/gt/object_attributes',
+                                                            sensor_qos)
         self._pub_plan = node.create_publisher(Path, f'{ns}/agent/plan', sensor_qos)
 
         # Disjoint N-tick sweep windows: list of (ego-frame points, ego transform)
@@ -414,8 +419,8 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
 
     def _publish_objects(self, stamp):
         # The newest complete sweep gives each box its LiDAR hit count, which is
-        # published as num_lidar_pts and binned into a visibility level. It stays
-        # None (-> num_points left at -1, both fields omitted) without a LiDAR or
+        # published as num_lidar_pts on gt/object_attributes. It stays None
+        # (-> num_points left at -1, so the field is omitted) without a LiDAR or
         # before the first sweep window completes. get_bounding_boxes refreshes
         # self._actors, from which the blueprint type_id is resolved for actors
         # whose box dict lacks it (ego, walkers, traffic lights, stop signs).
@@ -448,7 +453,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                 'speed': box.get('speed'),
                 'num_lidar_pts': box.get('num_points', -1),
             })
+        # Same stamp on both: subscribers join the two topics on the stamp and
+        # then on instance_id == Detection3D.id.
         self._pub_objects.publish(conv.detection3d_array_msg(detections, stamp))
+        self._pub_object_attributes.publish(conv.object_attributes_msg(detections, stamp))
 
     # ── Publish-only guarantees / lifecycle ──────────────────────────────────
 

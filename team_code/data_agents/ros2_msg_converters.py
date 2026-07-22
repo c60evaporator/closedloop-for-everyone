@@ -5,18 +5,20 @@ happens in the agent; inputs here are already in the frame the message declares,
 except the CARLA IMU whose fixed convention is converted in imu_msg.
 
 This module is the single swap point for the future shasou_msgs migration: the
-placeholder standard-message builders (vehicle_status_msg, detection3d_array_msg)
-are marked with TODO(shasou_msgs).
+placeholder standard-message builders (detection3d_array_msg,
+object_attributes_msg) are marked with TODO(shasou_msgs).
 
 Only this module and the ROS2 agents import rclpy/ROS packages, so the
 file-based agents keep working in environments without ROS.
 """
+import json
+
 import cv2
 import numpy as np
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from builtin_interfaces.msg import Time
-from std_msgs.msg import Bool, Header
+from std_msgs.msg import Bool, Header, String
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import CameraInfo, CompressedImage, Imu, JointState, NavSatFix, NavSatStatus, PointField
 from sensor_msgs_py import point_cloud2
@@ -203,42 +205,20 @@ def path_msg(points, stamp, frame_id='map'):
     return msg
 
 
-# num_lidar_pts -> nuScenes visibility level (1..4). Must stay identical to
-# visibility_for_points() in tools/nuscenes/convert_to_nuscenes.py so the ROS2
-# and the file-based collection paths bin annotations the same way.
-VISIBILITY_THRESHOLDS = ((10, 1), (30, 2), (80, 3))
-
-
-def _visibility_level(num_lidar_pts):
-    """Same binning as visibility_for_points() in convert_to_nuscenes.py: the
-    returned 1..4 maps directly onto the nuScenes visibility_token '1'..'4'
-    (v0-40 / v40-60 / v60-80 / v80-100)."""
-    for threshold, level in VISIBILITY_THRESHOLDS:
-        if num_lidar_pts <= threshold:
-            return level
-    return 4
-
-
 def detection3d_array_msg(detections, stamp, frame_id='map'):
-    """TODO(shasou_msgs): replace with a Detection3DArray extension carrying
-    proper velocity / visibility / instance fields.
+    """TODO(shasou_msgs): replace with a Detection3DArray extension carrying the
+    per-object attributes as real fields, so object_attributes_msg can go away.
 
     detections: iterable of dicts with keys center_xyz, quat_wxyz,
     size_xyz (full sizes, x=length), actor_id (int), class_id (CARLA blueprint
-    type_id string), speed (float forward speed m/s, or None), and optionally
-    instance_id (str, scene-unique tracking id) and num_lidar_pts (int, -1 when
-    unknown).
+    type_id string) and instance_id (str, scene-unique tracking id).
 
-    Detection3D.id carries the instance id ("ID used for consistency across
-    multiple detection messages" per the vision_msgs contract), so it is the
-    nuScenes instance_token source.
-
-    Placeholder metadata encoding: `results[0]` is the real class hypothesis;
-    every following ObjectHypothesisWithPose is a metadata slot whose class_id
-    is one of 'speed_mps', 'num_lidar_pts' or 'visibility' and whose score
-    carries the value, because the standard Detection3D has no field for them.
-    Subscribers MUST filter results by class_id rather than assume an order or
-    count.
+    `results` holds only the real class hypothesis, per the vision_msgs
+    contract. Attributes the message has no field for (speed, num_lidar_pts)
+    are published separately by object_attributes_msg and joined on
+    Detection3D.id, which carries the instance id ("ID used for consistency
+    across multiple detection messages") and is the nuScenes instance_token
+    source.
     """
     msg = Detection3DArray(header=_header(stamp, frame_id))
     for det in detections:
@@ -254,23 +234,43 @@ def detection3d_array_msg(detections, stamp, frame_id='map'):
         hypothesis.hypothesis.class_id = str(det['class_id'])
         hypothesis.hypothesis.score = 1.0
         detection.results.append(hypothesis)
-        if det.get('speed') is not None:
-            speed_hypothesis = ObjectHypothesisWithPose()
-            speed_hypothesis.hypothesis.class_id = 'speed_mps'
-            speed_hypothesis.hypothesis.score = float(det['speed'])
-            detection.results.append(speed_hypothesis)
-        # num_lidar_pts is -1 (or absent) when no LiDAR sweep was available to
-        # count hits against; publish nothing rather than a misleading 0.
-        num_lidar_pts = int(det.get('num_lidar_pts', -1))
-        if num_lidar_pts >= 0:
-            for class_id, score in (('num_lidar_pts', num_lidar_pts),
-                                    ('visibility', _visibility_level(num_lidar_pts))):
-                hypothesis = ObjectHypothesisWithPose()
-                hypothesis.hypothesis.class_id = class_id
-                hypothesis.hypothesis.score = float(score)
-                detection.results.append(hypothesis)
         msg.detections.append(detection)
     return msg
+
+
+def object_attributes_msg(detections, stamp, frame_id='map'):
+    """TODO(shasou_msgs): fold these attributes into the Detection3DArray
+    replacement; std_msgs/String is a stopgap for values vision_msgs cannot hold.
+
+    Same `detections` iterable as detection3d_array_msg, read for the keys
+    instance_id, speed (m/s) and num_lidar_pts (int, -1/absent when unknown).
+
+    Emits one JSON document per tick:
+
+        {"stamp": {"sec": 12, "nanosec": 500000000}, "frame_id": "map",
+         "objects": [{"instance_id": "3_42", "speed_mps": 0.5, "num_lidar_pts": 8}]}
+
+    std_msgs/String has no header, so the stamp is embedded: subscribers match a
+    document against the gt/objects message with the same stamp, then join the
+    objects on instance_id == Detection3D.id. Attributes whose value is unknown
+    (no speed, or num_lidar_pts < 0 because no LiDAR sweep was available) are
+    omitted rather than sent as a misleading 0.
+    """
+    objects = []
+    for det in detections:
+        attributes = {'instance_id': str(det.get('instance_id') or det['actor_id'])}
+        if det.get('speed') is not None:
+            attributes['speed_mps'] = float(det['speed'])
+        num_lidar_pts = int(det.get('num_lidar_pts', -1))
+        if num_lidar_pts >= 0:
+            attributes['num_lidar_pts'] = num_lidar_pts
+        objects.append(attributes)
+    document = {
+        'stamp': {'sec': int(stamp.sec), 'nanosec': int(stamp.nanosec)},
+        'frame_id': frame_id,
+        'objects': objects,
+    }
+    return String(data=json.dumps(document, separators=(',', ':')))
 
 
 def tf_static_msg(transforms, stamp, parent_frame_id='base_link'):
