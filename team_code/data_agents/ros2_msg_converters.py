@@ -203,22 +203,47 @@ def path_msg(points, stamp, frame_id='map'):
     return msg
 
 
+# num_lidar_pts -> nuScenes visibility level (1..4). Must stay identical to
+# visibility_for_points() in tools/nuscenes/convert_to_nuscenes.py so the ROS2
+# and the file-based collection paths bin annotations the same way.
+VISIBILITY_THRESHOLDS = ((10, 1), (30, 2), (80, 3))
+
+
+def _visibility_level(num_lidar_pts):
+    """Same binning as visibility_for_points() in convert_to_nuscenes.py: the
+    returned 1..4 maps directly onto the nuScenes visibility_token '1'..'4'
+    (v0-40 / v40-60 / v60-80 / v80-100)."""
+    for threshold, level in VISIBILITY_THRESHOLDS:
+        if num_lidar_pts <= threshold:
+            return level
+    return 4
+
+
 def detection3d_array_msg(detections, stamp, frame_id='map'):
-    """TODO(shasou_msgs): replace with the Detection3DArray extension carrying a
-    proper velocity field.
+    """TODO(shasou_msgs): replace with a Detection3DArray extension carrying
+    proper velocity / visibility / instance fields.
 
     detections: iterable of dicts with keys center_xyz, quat_wxyz,
     size_xyz (full sizes, x=length), actor_id (int), class_id (CARLA blueprint
-    type_id string), speed (float forward speed m/s, or None).
+    type_id string), speed (float forward speed m/s, or None), and optionally
+    instance_id (str, scene-unique tracking id) and num_lidar_pts (int, -1 when
+    unknown).
 
-    Placeholder speed encoding: a second ObjectHypothesisWithPose with
-    hypothesis.class_id='speed_mps' and score=speed, because the standard
-    Detection3D has no velocity field.
+    Detection3D.id carries the instance id ("ID used for consistency across
+    multiple detection messages" per the vision_msgs contract), so it is the
+    nuScenes instance_token source.
+
+    Placeholder metadata encoding: `results[0]` is the real class hypothesis;
+    every following ObjectHypothesisWithPose is a metadata slot whose class_id
+    is one of 'speed_mps', 'num_lidar_pts' or 'visibility' and whose score
+    carries the value, because the standard Detection3D has no field for them.
+    Subscribers MUST filter results by class_id rather than assume an order or
+    count.
     """
     msg = Detection3DArray(header=_header(stamp, frame_id))
     for det in detections:
         detection = Detection3D(header=_header(stamp, frame_id))
-        detection.id = str(det['actor_id'])
+        detection.id = str(det.get('instance_id') or det['actor_id'])
         detection.bbox.center = Pose(
             position=Point(x=float(det['center_xyz'][0]), y=float(det['center_xyz'][1]),
                            z=float(det['center_xyz'][2])),
@@ -234,6 +259,16 @@ def detection3d_array_msg(detections, stamp, frame_id='map'):
             speed_hypothesis.hypothesis.class_id = 'speed_mps'
             speed_hypothesis.hypothesis.score = float(det['speed'])
             detection.results.append(speed_hypothesis)
+        # num_lidar_pts is -1 (or absent) when no LiDAR sweep was available to
+        # count hits against; publish nothing rather than a misleading 0.
+        num_lidar_pts = int(det.get('num_lidar_pts', -1))
+        if num_lidar_pts >= 0:
+            for class_id, score in (('num_lidar_pts', num_lidar_pts),
+                                    ('visibility', _visibility_level(num_lidar_pts))):
+                hypothesis = ObjectHypothesisWithPose()
+                hypothesis.hypothesis.class_id = class_id
+                hypothesis.hypothesis.score = float(score)
+                detection.results.append(hypothesis)
         msg.detections.append(detection)
     return msg
 

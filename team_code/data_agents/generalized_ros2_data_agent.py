@@ -39,6 +39,16 @@ Conventions:
     relative radial velocity (negative = approaching; it includes the ego motion,
     so static objects read non-zero while the ego moves). CARLA's radar
     points_per_second (1500) and range (100 m) are hardcoded in the wrapper.
+  - gt/objects: Detection3D.id is the instance id "<route_index>_<carla_actor_id>",
+    stable for an actor's whole lifetime and unique within the route, so it maps
+    onto a nuScenes instance_token. Beyond results[0] (the real class), the
+    hypotheses are metadata slots keyed by class_id: 'speed_mps',
+    'num_lidar_pts' (LiDAR hits inside the box, counted on the newest complete
+    sweep of the first LiDAR) and 'visibility' (1..4, the nuScenes
+    visibility_token binning of num_lidar_pts). Note this is a LiDAR-observability
+    proxy, not the camera-pixel visibility nuScenes annotates; the last two are
+    omitted entirely when no sweep is available (no LiDAR in the rig, or before
+    the first window completes).
   - The agent publishes only: SAVE_PATH is dropped from the environment in
     setup(), so the whole file-writing chain (measurements/, sensor folders,
     sensor_calibration.json) is disabled. DATAGEN=1 must stay exported and the
@@ -130,6 +140,11 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         namespace_prefix = re.sub(r'\W', '_', self.TOPIC_NAMESPACE.strip('/'))
         route_suffix = re.sub(r'\W', '_', str(self.route_index if self.route_index is not None else 0))
         node_name = f'{namespace_prefix}_data_agent_{os.getpid()}_{route_suffix}'
+        # CARLA actor ids restart per episode, so scope the published instance ids
+        # by route to keep them unique when several routes are merged into one
+        # dataset (same intent as the (run, scene, actor) instance_token in
+        # tools/nuscenes/convert_to_nuscenes.py).
+        self._scene_prefix = route_suffix
         self._ros_node = rclpy.create_node(node_name)
 
         sensor_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
@@ -196,6 +211,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
         # per lidar, cleared after each publish (unlike the rolling
         # self.lidar_history of the base class, which stays unused here).
         self._lidar_window = {lidar['id']: [] for lidar in self.lidar_sensors}
+        # Newest complete sweep of the first LiDAR, kept in the ego frame and
+        # CARLA handedness for the gt/objects num_lidar_pts count. None until the
+        # first window completes (and forever without a LiDAR).
+        self._last_merged_lidar = None
         self._ros_tick = 0
 
         self._publish_tf_static()
@@ -308,6 +327,11 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                 aligned = [self._align_past_sweep(points, past_transform, ego_transform)
                            for points, past_transform in window[:-1]]
                 merged = np.concatenate([window[-1][0]] + aligned[::-1], axis=0)
+                if lidar is self.lidar_sensors[0]:
+                    # Still in the ego frame and CARLA handedness here, which is
+                    # what get_points_in_bbox expects (box position/yaw use the
+                    # same frame). nuScenes counts num_lidar_pts on one LiDAR.
+                    self._last_merged_lidar = merged[:, :3]
                 sweep = self._lidar_to_nuscenes_sensor_frame(merged, lidar)
                 self._pub_points[lidar_id].publish(conv.pointcloud2_msg(sweep, stamp, lidar_id))
                 window.clear()
@@ -389,11 +413,13 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                                                 parent_frame_id='map'))
 
     def _publish_objects(self, stamp):
-        # lidar=None skips the per-box points-in-bbox computation (num_points is
-        # not published). get_bounding_boxes refreshes self._actors, from which
-        # the blueprint type_id is resolved for actors whose box dict lacks it
-        # (ego, walkers, traffic lights, stop signs).
-        boxes = self.get_bounding_boxes(lidar=None)
+        # The newest complete sweep gives each box its LiDAR hit count, which is
+        # published as num_lidar_pts and binned into a visibility level. It stays
+        # None (-> num_points left at -1, both fields omitted) without a LiDAR or
+        # before the first sweep window completes. get_bounding_boxes refreshes
+        # self._actors, from which the blueprint type_id is resolved for actors
+        # whose box dict lacks it (ego, walkers, traffic lights, stop signs).
+        boxes = self.get_bounding_boxes(lidar=self._last_merged_lidar)
         type_id_by_actor = {actor.id: actor.type_id for actor in self._actors}
         # GeneralizedDataAgent.get_bounding_boxes already shifts the boxes to
         # their bounding-box centers, except ego_car whose matrix is the ego-frame
@@ -417,8 +443,10 @@ class GeneralizedROS2DataAgent(GeneralizedDataAgent):
                 'quat_wxyz': self._matrix_to_quaternion(matrix[:3, :3]),
                 'size_xyz': [2.0 * extent for extent in box['extent']],
                 'actor_id': box['id'],
+                'instance_id': f"{self._scene_prefix}_{box['id']}",
                 'class_id': box.get('type_id') or type_id_by_actor.get(box['id']) or box['class'],
                 'speed': box.get('speed'),
+                'num_lidar_pts': box.get('num_points', -1),
             })
         self._pub_objects.publish(conv.detection3d_array_msg(detections, stamp))
 
