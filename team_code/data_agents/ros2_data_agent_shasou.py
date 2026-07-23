@@ -16,8 +16,9 @@ routes never enters a bag, and the route <-> drive mapping is exact.
 
 This class only adds the recorder coupling; it defines no sensor rig
 (subclasses provide _sensors(), e.g. a future ROS2DataAgentShasouNuScenes).
-The request payload (location / route_id / scenario / weather) is task 2;
-this class sends placeholders.
+The StartRecording payload (location / route_id / scenario / weather) is filled
+from the CARLA world state; weather is snapped to the nearest Bench2Drive preset
+(see _classify_weather and _BENCH2DRIVE_WEATHER_PRESETS at the end of the file).
 
 Requires the shasou_msgs package importable from the agent's interpreter
 (a built shasou-msgs colcon workspace sourced on top of ROS2 Humble). When it
@@ -102,23 +103,27 @@ class ROS2DataAgentShasou(GeneralizedROS2DataAgent):
 
     def run_step(self, input_data, timestamp, sensors=None, plant=False):
         control = super().run_step(input_data, timestamp, sensors=sensors, plant=plant)
-        # StartRecording only after the first parent run_step: the weather (part
-        # of the request from task 2 on) is fixed by shuffle_weather() inside
-        # _init(), which the parent triggers on its first call. The first tick's
-        # publishes therefore predate the bag; that is accepted.
+        # StartRecording only after the first parent run_step: the weather sent
+        # in the request is fixed by shuffle_weather() inside _init(), which the
+        # parent triggers on its first call, and self._world is only live from
+        # then on. The first tick's publishes therefore predate the bag; that is
+        # accepted.
         if self._recorder_enabled and not self._recording_started:
             self._start_recording()
         return control
 
     def _start_recording(self):
         request = self._srv_start.Request()
+        # Only what the recorder cannot know itself (platform / vehicle / calib
+        # come from its own config). Every field is best-effort: a missing CARLA
+        # attribute degrades to '' rather than aborting, which the recorder
+        # contract accepts.
         request.source = 'carla'
-        # TODO(task 2): fill location / route_id / scenario / weather (via
-        # _classify_weather) from the CARLA world state.
-        request.location = ''
-        request.route_id = ''
-        request.scenario = ''
-        request.weather = ''
+        request.location = self._map_location()
+        request.route_id = str(self.route_index) if self.route_index is not None else ''
+        request.scenario = getattr(self, 'scenario_name', '') or ''
+        request.weather = self._current_weather_label()
+
         response = self._call_service(self._start_client, request)
         if response is None or not response.success:
             detail = (f'no response within {self.RECORDER_RESPONSE_TIMEOUT_SEC}s'
@@ -130,7 +135,34 @@ class ROS2DataAgentShasou(GeneralizedROS2DataAgent):
             self._recorder_enabled = False
             return
         self._recording_started = True
-        print(f'[ROS2DataAgentShasou] recording started (drive_id={response.drive_id})')
+        print(f'[ROS2DataAgentShasou] recording started (drive_id={response.drive_id}, '
+              f"location='{request.location}', route_id='{request.route_id}', "
+              f"scenario='{request.scenario}', weather='{request.weather}')")
+
+    def _map_location(self):
+        # self._world.get_map().name is a path like "Carla/Maps/Town12"; the
+        # recorder wants only the leaf ("Town12") for manifest.location /
+        # nuScenes log.location. Best-effort: any failure -> ''.
+        try:
+            map_name = self._world.get_map().name
+        except Exception as error:  # noqa: BLE001 — a missing map must not abort the run
+            print(f'[ROS2DataAgentShasou] could not read the map name ({error}); location left empty.')
+            return ''
+        return map_name.rsplit('/', 1)[-1] if map_name else ''
+
+    def _current_weather_label(self):
+        # shuffle_weather() sets the weather once in _init() and it stays fixed
+        # for the whole route (the Bench2Drive presets we match against use the
+        # same values at route_percentage 0 and 100), so classifying once at
+        # recording start labels the entire drive. A future setup that ramps the
+        # weather via route_percentage would break this assumption.
+        try:
+            weather = self._world.get_weather()
+        except Exception as error:  # noqa: BLE001 — missing weather must not abort the run
+            print(f'[ROS2DataAgentShasou] could not read the weather ({error}); weather left empty.')
+            return ''
+        params = {name: getattr(weather, name, None) for name in _WEATHER_PARAM_RANGES}
+        return self._classify_weather(params)
 
     def _call_service(self, client, request):
         """
@@ -158,10 +190,7 @@ class ROS2DataAgentShasou(GeneralizedROS2DataAgent):
         if getattr(self, '_recording_started', False):
             try:
                 request = self._srv_stop.Request()
-                # TODO(task 2+): report the real route outcome; for now every
-                # stop is a nominal completion.
-                request.completed = True
-                request.reason = ''
+                request.completed, request.reason = self._route_outcome(results)
                 response = self._call_service(self._stop_client, request)
                 if response is None:
                     print(f'[ROS2DataAgentShasou] StopRecording: no response within '
@@ -170,22 +199,142 @@ class ROS2DataAgentShasou(GeneralizedROS2DataAgent):
                     print(f'[ROS2DataAgentShasou] StopRecording failed: {response.message}')
                 else:
                     print(f'[ROS2DataAgentShasou] recording stopped (drive_id={response.drive_id}, '
-                          f'{response.message_count} messages, {response.duration_sec:.1f}s)')
+                          f'completed={request.completed}, {response.message_count} messages, '
+                          f'{response.duration_sec:.1f}s)')
             except Exception as error:  # noqa: BLE001 — never mask the evaluator teardown
                 print(f'[ROS2DataAgentShasou] StopRecording failed: {error}')
             self._recording_started = False
         super().destroy(results)
 
-    # ── Weather classification (task 2) ──────────────────────────────────────
+    def _route_outcome(self, results):
+        """
+        Map the leaderboard result passed to destroy() to (completed, reason).
+
+        The data-collection evaluator (leaderboard_evaluator_local.py) passes a
+        RouteRecord whose .status is 'Perfect' / 'Completed' on a route that
+        reached its target, and 'Failed - <reason>' otherwise. Some evaluator
+        variants (and crashes before statistics are computed) instead call
+        destroy() with no result; then completion cannot be judged and the drive
+        is reported as a nominal completion (completed=True), which studio-side
+        filters treat as "keep".
+        """
+        status = getattr(results, 'status', None)
+        if status is None:
+            return True, ''
+        completed = status in ('Completed', 'Perfect')
+        return completed, ('' if completed else status)
+
+    # ── Weather classification ───────────────────────────────────────────────
 
     def _classify_weather(self, params):
         """
-        Map CARLA WeatherParameters, given as a dict of attribute name -> value
-        (cloudiness, precipitation, sun_altitude_angle, ...), to the weather
-        label sent in StartRecording.weather.
+        Snap the current CARLA weather to the nearest Bench2Drive preset name.
 
-        Stub: always returns 'dummy'. Task 2 replaces this with a
-        nearest-neighbour classification against the 27 Bench2Drive weather
-        presets.
+        `params` is a dict of CARLA WeatherParameters attribute name -> value
+        (cloudiness, precipitation, sun_altitude_angle, ...). Each parameter is
+        normalized onto [0, 1] with _WEATHER_PARAM_RANGES so the differently
+        scaled axes (0-100 vs the -90..90 sun altitude) contribute comparably,
+        then a weighted squared-Euclidean distance to every preset in
+        _BENCH2DRIVE_WEATHER_PRESETS is minimized. sun_azimuth_angle is not used
+        (it is -1.0 for every preset but 26, so it carries no signal). A missing
+        / None parameter is skipped for that axis. Returns the preset name (e.g.
+        'ClearNoon'), which becomes manifest.weather and feeds nuScenes
+        scene.description; '' only if there are no presets at all.
+
+        The label is exact for CARLA's built-in presets that already match a
+        Bench2Drive row and nearest-neighbour otherwise (shuffle_weather picks
+        CARLA presets, whose values need not equal the Bench2Drive ones).
         """
-        return 'dummy'
+        best_name = ''
+        best_distance = None
+        for preset in _BENCH2DRIVE_WEATHER_PRESETS:
+            name = preset[1]
+            preset_values = dict(zip(_WEATHER_PARAM_NAMES, preset[2:]))
+            distance = 0.0
+            for param_name, (low, high) in _WEATHER_PARAM_RANGES.items():
+                value = params.get(param_name)
+                if value is None:
+                    continue
+                span = high - low
+                norm_value = (value - low) / span
+                norm_preset = (preset_values[param_name] - low) / span
+                weight = _WEATHER_PARAM_WEIGHTS.get(param_name, 1.0)
+                distance += weight * (norm_value - norm_preset) ** 2
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_name = name
+        return best_name
+
+
+# ── Bench2Drive weather presets (task 2) ─────────────────────────────────────
+# Kept together here so the definitions are easy to swap. Normalization range
+# (min, max) per classification parameter, so the Euclidean distance runs on
+# comparable [0, 1] scales.
+_WEATHER_PARAM_RANGES = {
+    'cloudiness': (0.0, 100.0),
+    'precipitation': (0.0, 100.0),
+    'precipitation_deposits': (0.0, 100.0),
+    'wetness': (0.0, 100.0),
+    'wind_intensity': (0.0, 100.0),
+    'sun_altitude_angle': (-90.0, 90.0),
+    'fog_density': (0.0, 100.0),
+}
+# Column order of the preset tuples below matches the range keys above.
+_WEATHER_PARAM_NAMES = tuple(_WEATHER_PARAM_RANGES)
+# Extra weight on sun_altitude_angle: time of day (noon / day / sunset / night)
+# is the visually dominant axis and the one nuScenes scene.description keys on,
+# so it should pull classification harder than the rest (each weight 1.0). Any
+# positive weight keeps the self-consistency test valid (an exact preset match
+# is distance 0 regardless of weights).
+_WEATHER_PARAM_WEIGHTS = {'sun_altitude_angle': 2.0}
+
+# Bench2Drive weather.xml presets: 23 rows (weather_id 4, 16, 17, 24 are absent).
+# Each row is (weather_id, name, cloudiness, precipitation, precipitation_deposits,
+# wetness, wind_intensity, sun_altitude_angle, fog_density). weather_id is kept
+# for future id-based lookups. sun_azimuth_angle is omitted: it is -1.0 for every
+# preset except id 26 and is excluded from the distance either way.
+# Naming rule: precipitation 30=Soft / 50-60=Mid / 100=Hard; fog_density>=50
+# =Foggy, 100=DenseFog; high wetness=Wet / VeryWet; sun_altitude 70-90=Noon /
+# 45=Day / 0-15=Sunset / -90=Night.
+_BENCH2DRIVE_WEATHER_PRESETS = (
+    (0,  'ClearNoon',                5,   0,   0,   0,   10,  90,   2),
+    (1,  'ClearSunset',              5,   0,   0,   0,   10,  15,   2),
+    (2,  'SoftRainDay',             20,  30,  50,   0,   30,  45,   3),
+    (3,  'MidRainDay',              60,  60,  60,   0,   60,  45,   3),
+    (5,  'WetCloudyDay',            80,   0,  50,  20,   10,  45,   3),
+    (6,  'ClearFoggySunset',         5,   0,  50,   0,   10,  15,  10),
+    (7,  'ClearDay',                 5,   0,   0,   0,   10,  45,   2),
+    (8,  'HardRainDay',            100, 100,  90,   0,  100,  45,   7),
+    (9,  'MidRainFoggyDay',         70,  60,  60,   0,   60,  45,  50),
+    (10, 'HardRainSunset',          40, 100,  90,   0,  100,   0,   7),
+    (11, 'MidRainFoggyCloudyDay',  100,  60,  60,   0,   60,  45,  50),
+    (12, 'FoggyDay',                 5,   0,   0,   0,   10,  45,  50),
+    (13, 'FoggySunset',              5,   0,   0,   0,   10,  15,  50),
+    (14, 'HardRainWetDay',         100, 100,  50,  50,  100,  45,  10),
+    (15, 'MidRainVeryWetDay',      100,  50, 100,  80,   80,  45,  10),
+    (18, 'CloudySunset',            40,   0,  50,   0,   10,  15,   2),
+    (19, 'CloudyNight',             40,   0,  50,   0,   10, -90,   2),
+    (20, 'SoftRainNight',           60,  30,  50,  60,   30, -90,   3),
+    (21, 'HardRainNight',          100, 100,  90, 100,  100, -90,   3),
+    (22, 'FoggyNight',               5,   0,   0,   0,   10, -90,  60),
+    (23, 'MidRainFoggyNight',       80,  60,  60,  80,   60, -90,  60),
+    (25, 'HardRainDenseFogNight',  100, 100,  90, 100,  100, -90, 100),
+    (26, 'PartlyCloudyNoon',        50,   0,   0,   0,    0,  70,   0),
+)
+
+
+if __name__ == '__main__':
+    # Weather self-consistency check (task 2 completion criterion): feeding each
+    # preset's own parameters must return that preset's name. _classify_weather
+    # ignores self, so it is called on the class with a dummy self. Run with the
+    # collect_dataset PYTHONPATH so the base-class imports resolve, e.g.:
+    #   python team_code/data_agents/ros2_data_agent_shasou.py
+    failures = []
+    for _preset in _BENCH2DRIVE_WEATHER_PRESETS:
+        sample = dict(zip(_WEATHER_PARAM_NAMES, _preset[2:]))
+        got = ROS2DataAgentShasou._classify_weather(None, sample)
+        if got != _preset[1]:
+            failures.append((_preset[1], got))
+    if failures:
+        raise SystemExit(f'weather self-test FAILED (expected -> got): {failures}')
+    print(f'weather self-test passed: {len(_BENCH2DRIVE_WEATHER_PRESETS)} presets')
